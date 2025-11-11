@@ -39,10 +39,15 @@ def build_clients():
     cs = os.getenv("X_API_SECRET")
     at = os.getenv("X_ACCESS_TOKEN")
     ats = os.getenv("X_ACCESS_SECRET")
+    bt = os.getenv("X_BEARER_TOKEN")  # new
+
+    if not bt:
+        raise RuntimeError("X_BEARER_TOKEN fehlt – wird zum Lesen benötigt (verhindert 401).")
     if not all([ck, cs, at, ats]):
         raise RuntimeError("Twitter Keys fehlen (X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_SECRET).")
 
-    client_v2 = tweepy.Client(
+    read_client_v2 = tweepy.Client(bearer_token=bt, wait_on_rate_limit=True)
+    post_client_v2 = tweepy.Client(
         consumer_key=ck,
         consumer_secret=cs,
         access_token=at,
@@ -51,9 +56,9 @@ def build_clients():
     )
     auth = tweepy.OAuth1UserHandler(ck, cs, at, ats)
     api_v11 = tweepy.API(auth, wait_on_rate_limit=True)
-    return client_v2, api_v11
+    return read_client_v2, post_client_v2, api_v11
 
-client, api_v1 = build_clients()
+read_client, client, api_v1 = build_clients()
 
 # ---- Memes ----
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
@@ -208,6 +213,14 @@ def post_reply_robust(client_v2: tweepy.Client,
 # ---- Simple in-process seen state ----
 SEEN_IDS: set[str] = set()
 
+_env_seen = (os.getenv("STATE_SEEN_IDS") or "").strip()
+if _env_seen:
+    try:
+        parts = [p.strip() for p in _env_seen.split(",") if p.strip().isdigit()]
+        SEEN_IDS.update(parts)
+    except Exception:
+        pass
+
 def have_seen(tid: str) -> bool:
     return tid in SEEN_IDS
 
@@ -215,18 +228,26 @@ def mark_seen(tid: str):
     SEEN_IDS.add(tid)
 
 # ---- Polling & reply loop ----
-def fetch_recent_tweets(client_v2: tweepy.Client, user_id: str, since_id: str | None = None):
+def fetch_recent_tweets(read_client_v2: tweepy.Client, user_id: str, since_id: str | None = None):
     params = {
         "max_results": 10,
         "tweet_fields": "created_at,public_metrics,referenced_tweets,author_id",
-        "exclude": "retweets,replies" if ONLY_ORIGINAL else None
     }
     try:
         if since_id:
-            resp = client_v2.get_users_tweets(id=user_id, since_id=since_id, **{k:v for k,v in params.items() if v})
+            resp = read_client_v2.get_users_tweets(id=user_id, since_id=since_id, **params)
         else:
-            resp = client_v2.get_users_tweets(id=user_id, **{k:v for k,v in params.items() if v})
-        return resp.data or []
+            resp = read_client_v2.get_users_tweets(id=user_id, **params)
+        tweets = resp.data or []
+        if ONLY_ORIGINAL:
+            filtered = []
+            for t in tweets:
+                refs = getattr(t, "referenced_tweets", None) or []
+                is_rt_or_reply = any(r.type in ("replied_to", "retweeted") for r in refs)
+                if not is_rt_or_reply:
+                    filtered.append(t)
+            return filtered
+        return tweets
     except Exception as e:
         log.warning(f"Fetch tweets failed for {user_id}: {e}")
         return []
@@ -255,13 +276,13 @@ def main_loop():
                 continue
             last_poll[uid] = now
 
-            tweets = fetch_recent_tweets(client, uid, since_map[uid])
+            tweets = fetch_recent_tweets(read_client, uid, since_map[uid])
             if tweets:
                 since_map[uid] = max(str(t.id) for t in tweets)
 
             for t in tweets:
                 tid = str(t.id)
-                if have_seen(tid): 
+                if have_seen(tid):
                     continue
                 if per_user_count[uid] >= MAX_REPLIES_PER_KOL_PER_DAY:
                     continue
