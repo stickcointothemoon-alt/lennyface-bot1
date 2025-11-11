@@ -1,267 +1,346 @@
 # bot_basic.py
-import os, json, time, random, logging, glob, mimetypes, io
-from datetime import datetime, timedelta
-from typing import Set, Dict
+# -----------------------------------------------------------
+# Lenny-Bot – stabile Basis mit:
+# - KORREKTER Medienbehandlung (media_ids statt media)
+# - Fallback auf v1.1 bei Problemen
+# - State (/tmp/state.json + ENV STATE_SEEN_IDS)
+# - Meme-Auswahl aus ./memes
+# - Einfacher Reply-Loop über TARGET_IDS
+# -----------------------------------------------------------
+import os
+import io
+import json
+import time
+import random
+import logging
+from typing import List, Set, Optional
 
 import tweepy
-import requests
-from PIL import Image
 
+# -------------------------
+# Logging
+# -------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
-log = logging.getLogger(__name__)
 
-# === Konfiguration aus ENV ===
-MEME_PROBABILITY = float(os.getenv("MEME_PROBABILITY", "0.3"))
-REPLY_PROBABILITY = float(os.getenv("REPLY_PROBABILITY", "1.0"))
-ONLY_ORIGINAL = os.getenv("ONLY_ORIGINAL", "1") == "1"
+# -------------------------
+# Env-Helper
+# -------------------------
+def env_bool(name: str, default: bool = False) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return str(v).strip() in ("1", "true", "True", "yes", "YES")
 
-COOLDOWN_S = int(os.getenv("COOLDOWN_S", "300"))
-LOOP_SLEEP_SECONDS = int(os.getenv("LOOP_SLEEP_SECONDS", "240"))
-READ_COOLDOWN_S = int(os.getenv("READ_COOLDOWN_S", "6"))
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
 
-MAX_REPLIES_PER_KOL_PER_DAY = int(os.getenv("MAX_REPLIES_PER_KOL_PER_DAY", "3"))
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except Exception:
+        return default
 
-TARGET_IDS = [t.strip() for t in os.getenv("TARGET_IDS", "").split(",") if t.strip()]
+def env_csv(name: str) -> List[str]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return []
+    return [p.strip() for p in raw.split(",") if p.strip()]
 
-# Heroku Auto-Backup (optional)
-HEROKU_APP_NAME = os.getenv("HEROKU_APP_NAME", "").strip()
-HEROKU_API_KEY = os.getenv("HEROKU_API_KEY", "").strip()
+# -------------------------
+# Konfiguration
+# -------------------------
+X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN")
+X_API_KEY      = os.getenv("X_API_KEY")
+X_API_SECRET   = os.getenv("X_API_SECRET")
+X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN")
+X_ACCESS_SECRET= os.getenv("X_ACCESS_SECRET")
 
-STATE_FILE = "/tmp/state.json"  # Ephemer, aber überlebt Dyno-Neustarts bis zum nächsten Wechsel
+TARGET_IDS          = [t for t in env_csv("TARGET_IDS") if t.isdigit()]
+ONLY_ORIGINAL       = env_bool("ONLY_ORIGINAL", True)
+REPLY_PROBABILITY   = env_float("REPLY_PROBABILITY", 1.0)  # 0..1
+MEME_PROBABILITY    = env_float("MEME_PROBABILITY", 0.30)  # 0..1
+DEX_REPLY_PROB      = env_float("DEX_REPLY_PROB", 0.50)    # optional
 
+COOLDOWN_S          = env_int("COOLDOWN_S", 300)           # Pause nach Reply-Wellen
+READ_COOLDOWN_S     = env_int("READ_COOLDOWN_S", 6)        # kurze Pause zwischen Reads
+LOOP_SLEEP_SECONDS  = env_int("LOOP_SLEEP_SECONDS", 240)   # Pause zwischen Loops
+PER_KOL_MIN_POLL_S  = env_int("PER_KOL_MIN_POLL_S", 1200)  # Mind. Pause je KOL
 
-# ========== SEEN STORE ==========
-class SeenStore:
-    def __init__(self, state_file=STATE_FILE):
-        self.state_file = state_file
-        self.seen: Set[str] = set()
-        self._load_from_env()
-        self._load_from_file()
-        self._last_backup = time.time()
+MEME_DIR            = "memes"
+STATE_PATH          = "/tmp/state.json"  # wird von Dyno überlebt bis Neustart
+SEEN_ENV_NAME       = "STATE_SEEN_IDS"   # einmaliger Seed / Backup via Config Var
 
-    def _load_from_env(self):
-        raw = os.getenv("STATE_SEEN_IDS", "").strip()
-        if raw:
-            parts = [p.strip() for p in raw.split(",") if p.strip()]
-            self.seen.update(parts)
-
-    def _load_from_file(self):
-        try:
-            with open(self.state_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            self.seen.update([str(x) for x in data])
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            log.warning(f"State-Datei konnte nicht gelesen werden: {e}")
-
-    def save_local(self):
-        try:
-            with open(self.state_file, "w", encoding="utf-8") as f:
-                json.dump(sorted(self.seen, key=lambda x: int(x)), f)
-        except Exception as e:
-            log.warning(f"State-Datei konnte nicht gespeichert werden: {e}")
-
-    def backup_to_env(self):
-        if not (HEROKU_API_KEY and HEROKU_APP_NAME):
-            return  # optional
-        try:
-            url = f"https://api.heroku.com/apps/{HEROKU_APP_NAME}/config-vars"
-            headers = {
-                "Accept": "application/vnd.heroku+json; version=3",
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {HEROKU_API_KEY}",
-            }
-            # Heroku max. Länge beachten: Wir schneiden hart, falls gigantisch
-            ids_sorted = sorted(self.seen, key=lambda x: int(x), reverse=True)
-            joined = ",".join(ids_sorted[:1000])
-            requests.patch(url, headers=headers, json={"STATE_SEEN_IDS": joined}, timeout=30)
-            log.info("☁️  Backup OK — STATE_SEEN_IDS in Heroku aktualisiert.")
-        except Exception as e:
-            log.warning(f"Backup fehlgeschlagen: {e}")
-
-    def add(self, tweet_id: str, force_backup=False):
-        before = len(self.seen)
-        self.seen.add(str(tweet_id))
-        if len(self.seen) != before:
-            self.save_local()
-            # alle 10 neuen IDs oder alle 30 Min → Backup
-            if force_backup or (len(self.seen) % 10 == 0) or (time.time() - self._last_backup > 1800):
-                self.backup_to_env()
-                self._last_backup = time.time()
-
-
-SEEN = SeenStore()
-log.info(f"State geladen: {len(SEEN.seen)} bereits beantwortete Tweet-IDs")
-
-
-# ========== TWITTER CLIENTS ==========
-BT = os.getenv("X_BEARER_TOKEN")
-CK = os.getenv("X_API_KEY")
-CS = os.getenv("X_API_SECRET")
-AT = os.getenv("X_ACCESS_TOKEN")
-AS = os.getenv("X_ACCESS_SECRET")
-
-if not all([BT, CK, CS, AT, AS]):
-    raise SystemExit("❌ X API Keys fehlen in Config Vars.")
-
-client_v2 = tweepy.Client(
-    bearer_token=BT,
-    consumer_key=CK,
-    consumer_secret=CS,
-    access_token=AT,
-    access_token_secret=AS,
-    wait_on_rate_limit=True,
+# -------------------------
+# Clients (v2 + v1.1)
+# -------------------------
+client = tweepy.Client(
+    bearer_token=X_BEARER_TOKEN,
+    consumer_key=X_API_KEY,
+    consumer_secret=X_API_SECRET,
+    access_token=X_ACCESS_TOKEN,
+    access_token_secret=X_ACCESS_SECRET,
+    wait_on_rate_limit=True
 )
 
-auth_v1 = tweepy.OAuth1UserHandler(CK, CS, AT, AS)
+auth_v1 = tweepy.OAuth1UserHandler(
+    X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET
+)
 api_v1 = tweepy.API(auth_v1, wait_on_rate_limit=True)
 
-me = client_v2.get_me().data
-log.info(f"Started as @{me.username} — targets: {len(TARGET_IDS)}")
+# -------------------------
+# State: SEEN Tweet-IDs
+# -------------------------
+def load_state() -> Set[str]:
+    seen: Set[str] = set()
+    # 1) aus Datei
+    if os.path.exists(STATE_PATH):
+        try:
+            with open(STATE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                seen |= set(str(x) for x in data if str(x).isdigit())
+        except Exception as e:
+            logging.warning(f"State-Datei fehlerhaft: {e}")
 
+    # 2) Merge mit ENV (Seed/Backup)
+    env_ids = env_csv(SEEN_ENV_NAME)
+    for x in env_ids:
+        if x.isdigit():
+            seen.add(x)
 
-# ========== MEME PICK / UPLOAD ==========
-def list_memes():
+    logging.info(f"State geladen: {len(seen)} bereits beantwortete Tweet-IDs")
+    return seen
+
+def save_state(seen: Set[str]) -> None:
+    try:
+        with open(STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump(sorted(seen), f)
+    except Exception as e:
+        logging.warning(f"State konnte nicht gespeichert werden: {e}")
+
+# -------------------------
+# Memes
+# -------------------------
+ALLOWED_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+
+def ensure_meme_dir() -> None:
+    os.makedirs(MEME_DIR, exist_ok=True)
+
+def list_memes() -> List[str]:
+    ensure_meme_dir()
     files = []
-    for pat in ("memes/*.jpg", "memes/*.jpeg", "memes/*.png", "memes/*.gif"):
-        files.extend(glob.glob(pat))
+    for fn in os.listdir(MEME_DIR):
+        if fn.lower().endswith(ALLOWED_EXT):
+            files.append(os.path.join(MEME_DIR, fn))
     return files
 
-def pick_meme():
+def pick_meme() -> Optional[str]:
     files = list_memes()
     if not files:
         return None
     return random.choice(files)
 
-def upload_media_v11(path: str) -> str:
-    # Sichere Mime-Erkennung
-    mime, _ = mimetypes.guess_type(path)
-    if not mime:
-        # Fallback: per PIL als PNG/JPEG neu speichern
-        with Image.open(path) as im:
-            tmp = io.BytesIO()
-            if im.mode not in ("RGB", "RGBA"):
-                im = im.convert("RGB")
-            im.save(tmp, format="PNG", optimize=True)
-            tmp.seek(0)
-            return api_v1.media_upload(filename="meme.png", file=tmp).media_id_string
-
+# -------------------------
+# Posting / Replies – FIXED (media_ids statt media)
+# -------------------------
+def post_meme_with_caption(meme_path: str, caption: str) -> bool:
     try:
-        media = api_v1.media_upload(filename=path)
-        return media.media_id_string
-    except Exception:
-        # Fallback beim Mime-Fehler:
-        with Image.open(path) as im:
-            tmp = io.BytesIO()
-            if im.mode not in ("RGB", "RGBA"):
-                im = im.convert("RGB")
-            # PNG Fallback
-            im.save(tmp, format="PNG", optimize=True)
-            tmp.seek(0)
-            media = api_v1.media_upload(filename="meme.png", file=tmp)
-            return media.media_id_string
-
-
-# ========== LOGIK ==========
-_last_reply_time_per_kol: Dict[str, list] = {}  # user_id -> [timestamps]
-
-def within_daily_limit(user_id: str) -> bool:
-    now = time.time()
-    arr = _last_reply_time_per_kol.setdefault(user_id, [])
-    # purge älter 24h
-    cutoff = now - 24*3600
-    arr[:] = [t for t in arr if t >= cutoff]
-    return len(arr) < MAX_REPLIES_PER_KOL_PER_DAY
-
-def remember_reply(user_id: str):
-    _last_reply_time_per_kol.setdefault(user_id, []).append(time.time())
-
-def should_reply_to(tweet) -> bool:
-    if str(tweet.id) in SEEN.seen:
-        return False
-    if ONLY_ORIGINAL and tweet.referenced_tweets:
-        # ist Reply/Retweet/Quote
-        return False
-    # Zufallsfaktor global
-    return random.random() < REPLY_PROBABILITY
-
-def craft_text(tweet, author):
-    # Sehr simpel, du kannst später GROK einhängen/verschärfen
-    base = f"( ͡° ͜ʖ ͡°) $LENNY on Sol — join the cult."
-    return base
-
-def reply_with_optional_meme(tweet_id: str, text: str):
-    use_meme = (random.random() < MEME_PROBABILITY)
-    media_ids = None
-    if use_meme:
-        meme = pick_meme()
-        if meme:
-            try:
-                mid = upload_media_v11(meme)
-                media_ids = [mid]
-            except Exception as e:
-                log.warning(f"Meme upload failed: {e}")
-
-    # Reply via v2
-    try:
-        client_v2.create_tweet(text=text, in_reply_to_tweet_id=tweet_id, media={"media_ids": media_ids} if media_ids else None)
-        log.info(f"Reply → {tweet_id} | {'[meme]' if media_ids else '[text]'} {text[:80]}")
-    except Exception as e:
-        log.warning(f"Reply fehlgeschlagen: {e}")
-        raise
-
-def loop_once():
-    if not TARGET_IDS:
-        log.warning("Keine TARGET_IDS gesetzt.")
-        time.sleep(10)
-        return
-
-    for uid in TARGET_IDS:
+        media = api_v1.media_upload(filename=meme_path)  # v1.1 Upload
+        client.create_tweet(text=caption, media_ids=[media.media_id])  # v2 Tweet
+        logging.info("Meme-Post OK (v2 with media_ids)")
+        return True
+    except tweepy.Forbidden as e:
+        # Manche Accounts/API-Stufen blocken v2+media → Fallback v1.1
+        logging.warning(f"v2 create_tweet forbidden ({e}); fallback v1.1")
         try:
-            # Neueste Tweets eines Users
-            resp = client_v2.get_users_tweets(id=uid, max_results=5, expansions=["referenced_tweets.id"], tweet_fields=["created_at"])
-            tweets = resp.data or []
-            for tw in tweets:
-                if not should_reply_to(tw):
-                    continue
-                if not within_daily_limit(uid):
-                    continue
+            api_v1.update_status(status=caption, media_ids=[media.media_id])
+            logging.info("Meme-Post OK (v1.1 fallback)")
+            return True
+        except Exception as e2:
+            logging.warning(f"Fallback v1.1 fehlgeschlagen: {e2}")
+            return False
+    except Exception as e:
+        logging.warning(f"Meme-Post fehlgeschlagen: {e}")
+        return False
 
-                # Antworten:
-                try:
-                    author = None
-                    text = craft_text(tw, author)
-                    reply_with_optional_meme(str(tw.id), text)
-                    SEEN.add(str(tw.id))        # Sofort merken
-                    remember_reply(uid)         # Tageslimit zählen
-                    time.sleep(READ_COOLDOWN_S) # leichtes Delay
-                except Exception:
-                    # Fehler schon geloggt, einfach weiter
-                    continue
-        except tweepy.TooManyRequests:
-            log.warning("Rate-Limit — kurz warten.")
-            time.sleep(60)
-        except Exception as e:
-            log.warning(f"Fehler beim Lesen von {uid}: {e}")
-            time.sleep(3)
+def reply_with_text(target_tweet_id: int, reply_text: str) -> bool:
+    try:
+        client.create_tweet(
+            text=reply_text,
+            reply={'in_reply_to_tweet_id': str(target_tweet_id)}
+        )
+        logging.info(f"Reply (nur Text) OK → {target_tweet_id}")
+        return True
+    except tweepy.Forbidden as e:
+        logging.warning(f"v2 reply forbidden ({e}); fallback v1.1")
+        try:
+            api_v1.update_status(
+                status=reply_text,
+                in_reply_to_status_id=target_tweet_id,
+                auto_populate_reply_metadata=True
+            )
+            logging.info(f"Reply (nur Text) OK (v1.1 fallback) → {target_tweet_id}")
+            return True
+        except Exception as e2:
+            logging.warning(f"Fallback v1.1 reply failed: {e2}")
+            return False
+    except Exception as e:
+        logging.warning(f"Reply fehlgeschlagen: {e}")
+        return False
 
-def main():
-    cooldown_until = 0
+def reply_with_meme(target_tweet_id: int, reply_text: str, meme_path: str) -> bool:
+    try:
+        media = api_v1.media_upload(filename=meme_path)
+        client.create_tweet(
+            text=reply_text,
+            reply={'in_reply_to_tweet_id': str(target_tweet_id)},
+            media_ids=[media.media_id]
+        )
+        logging.info(f"Reply mit Meme OK → {target_tweet_id}")
+        return True
+    except tweepy.Forbidden as e:
+        logging.warning(f"v2 reply forbidden ({e}); fallback v1.1")
+        try:
+            api_v1.update_status(
+                status=reply_text,
+                media_ids=[media.media_id],
+                in_reply_to_status_id=target_tweet_id,
+                auto_populate_reply_metadata=True
+            )
+            logging.info(f"Reply mit Meme OK (v1.1 fallback) → {target_tweet_id}")
+            return True
+        except Exception as e2:
+            logging.warning(f"Fallback v1.1 reply failed: {e2}")
+            return False
+    except Exception as e:
+        logging.warning(f"Reply fehlgeschlagen: {e}")
+        return False
+
+# -------------------------
+# Text-Generator (simpel, immer $LENNY shillen)
+# -------------------------
+LENNY_TAG = "$LENNY"
+
+FALLBACK_LINES = [
+    f"{LENNY_TAG} ist wieder am Marschieren ( ͡° ͜ʖ ͡°)  🚀",
+    f"Nur echte Chads hodln {LENNY_TAG} ( ͡° ͜ʖ ͡°) ✊",
+    f"Mehr Memes, mehr Reichweite, mehr {LENNY_TAG}! ( ͡° ͜ʖ ͡°)",
+    f"Lass die Timeline lachen – buy {LENNY_TAG}! ( ͡° ͜ʖ ͡°)"
+]
+
+def make_reply_text() -> str:
+    return random.choice(FALLBACK_LINES)
+
+def make_caption_text() -> str:
+    return random.choice(FALLBACK_LINES)
+
+# -------------------------
+# Bot-Loop (einfach & stabil)
+# -------------------------
+def should_reply() -> bool:
+    return random.random() <= REPLY_PROBABILITY
+
+def use_meme() -> bool:
+    return random.random() <= MEME_PROBABILITY
+
+def get_latest_user_tweets(user_id: str) -> List[tweepy.Tweet]:
+    # exclude: replies/retweets falls ONLY_ORIGINAL aktiv
+    exclude = []
+    if ONLY_ORIGINAL:
+        exclude = ["replies", "retweets"]
+    try:
+        resp = client.get_users_tweets(
+            id=user_id,
+            max_results=5,
+            exclude=exclude,
+            tweet_fields=["created_at"]
+        )
+        if resp.data:
+            return list(resp.data)
+        return []
+    except tweepy.TooManyRequests:
+        # Rate Limit → kurz schlafen, dann leer zurück
+        logging.warning("Rate limit exceeded. Sleeping for 249 seconds.")
+        time.sleep(249)
+        return []
+    except Exception as e:
+        logging.warning(f"get_users_tweets Fehler: {e}")
+        return []
+
+def main_loop():
+    logging.info(f"Started as @lennyface_bot — targets: {len(TARGET_IDS)}")
+
+    ensure_meme_dir()
+    seen = load_state()
+    last_poll_at = {}  # user_id -> last poll timestamp
+
     while True:
-        now = time.time()
-        if now < cooldown_until:
-            time.sleep(1)
-            continue
+        loop_start = time.time()
 
-        loop_once()
-        # Grundschlaf
-        time.sleep(LOOP_SLEEP_SECONDS)
-        # kleiner Cooldown, wenn eben geantwortet wurde
-        cooldown_until = time.time() + COOLDOWN_S
+        for uid in TARGET_IDS:
+            # Rate-Limit / Poll-Minimum je KOL
+            last_t = last_poll_at.get(uid, 0)
+            if time.time() - last_t < PER_KOL_MIN_POLL_S:
+                continue
+            last_poll_at[uid] = time.time()
 
+            tweets = get_latest_user_tweets(uid)
+            if not tweets:
+                time.sleep(READ_COOLDOWN_S)
+                continue
+
+            for tw in tweets:
+                tid = str(tw.id)
+                if tid in seen:
+                    continue
+
+                if not should_reply():
+                    continue
+
+                text = make_reply_text()
+
+                ok = False
+                if use_meme():
+                    meme = pick_meme()
+                    if meme:
+                        ok = reply_with_meme(int(tid), text, meme)
+                    else:
+                        ok = reply_with_text(int(tid), text)
+                else:
+                    ok = reply_with_text(int(tid), text)
+
+                if ok:
+                    seen.add(tid)
+                    save_state(seen)
+                    time.sleep(COOLDOWN_S)  # kleine Pause nach Erfolg
+                else:
+                    # auch bei Fail merken, damit wir nicht spammen
+                    seen.add(tid)
+                    save_state(seen)
+                    time.sleep(READ_COOLDOWN_S)
+
+                # sanfte Pause zwischen Tweets
+                time.sleep(READ_COOLDOWN_S)
+
+        # Loop-Pause
+        elapsed = time.time() - loop_start
+        if elapsed < LOOP_SLEEP_SECONDS:
+            time.sleep(LOOP_SLEEP_SECONDS - elapsed)
+
+# -------------------------
+# Start
+# -------------------------
 if __name__ == "__main__":
-    main()
+    # Optional: Auto-Fetch, falls du FETCH_MEMES_URL nutzt und Procfile NICHT "fetch_memes && bot" macht.
+    # Einfach aktivieren, wenn gewünscht:
+    # try:
+    #     from fetch_memes import fetch_if_configured
+    #     fetch_if_configured(dest_dir=MEME_DIR)
+    # except Exception as e:
+    #     logging.warning(f"Auto-Fetch übersprungen: {e}")
+    main_loop()
