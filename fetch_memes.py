@@ -1,66 +1,170 @@
 # fetch_memes.py
-import os, sys, shutil, zipfile, tempfile, glob
-from urllib.request import urlopen, Request
+import os, io, sys, zipfile, shutil, tempfile
+from urllib.parse import urlparse
+import requests
+from PIL import Image
 
-URL = os.getenv("FETCH_MEMES_URL", "").strip()
-TARGET_DIR = "memes"
-OK_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+OUT_DIR = "memes"
 
-def download(url, out_path):
-    req = Request(url, headers={"User-Agent":"Mozilla/5.0"})
-    with urlopen(req) as r, open(out_path, "wb") as f:
-        shutil.copyfileobj(r, f)
+def log(msg):
+    print(msg, flush=True)
+
+def ensure_out_dir():
+    if not os.path.isdir(OUT_DIR):
+        os.makedirs(OUT_DIR, exist_ok=True)
+
+def safe_ext(name: str) -> str:
+    name = name.lower()
+    for ext in ALLOWED_EXT:
+        if name.endswith(ext):
+            return ext
+    return ""
+
+def normalize_image(in_bytes: bytes, orig_name: str) -> (bytes, str):
+    """
+    - Öffnet via Pillow
+    - Konvertiert WEBP → PNG
+    - Konvertiert CMYK → RGB
+    - Gibt (bytes, neue_ext) zurück
+    """
+    with Image.open(io.BytesIO(in_bytes)) as im:
+        fmt = (im.format or "").upper()
+        mode = im.mode
+        # CMYK → RGB
+        if mode not in ("RGB", "RGBA"):
+            im = im.convert("RGBA" if "A" in mode else "RGB")
+
+        # WEBP → PNG, sonst Originalformat bevorzugen
+        if fmt == "WEBP":
+            buf = io.BytesIO()
+            im.save(buf, format="PNG", optimize=True)
+            return buf.getvalue(), ".png"
+        elif fmt in ("PNG", "GIF", "JPEG", "JPG"):
+            # Bei JPEG → als JPEG speichern
+            target_fmt = "JPEG" if fmt in ("JPEG", "JPG") else fmt
+            buf = io.BytesIO()
+            if target_fmt == "JPEG":
+                # JPEG darf kein Alpha haben
+                if im.mode == "RGBA":
+                    im = im.convert("RGB")
+                im.save(buf, format="JPEG", quality=90, optimize=True)
+                return buf.getvalue(), ".jpg"
+            else:
+                im.save(buf, format=target_fmt, optimize=True)
+                return buf.getvalue(), f".{target_fmt.lower()}"
+        else:
+            # Unbekannt → PNG
+            buf = io.BytesIO()
+            im.save(buf, format="PNG", optimize=True)
+            return buf.getvalue(), ".png"
 
 def main():
-    if not URL:
-        print("❌ FETCH_MEMES_URL fehlt (Config Var).")
+    url = os.getenv("FETCH_MEMES_URL", "").strip()
+    if not url:
+        log("❌ FETCH_MEMES_URL fehlt (Config Var).")
         sys.exit(1)
-    os.makedirs(TARGET_DIR, exist_ok=True)
 
-    # temp-ZIP
-    tmpdir = tempfile.mkdtemp()
-    zippath = os.path.join(tmpdir, "memes.zip")
+    ensure_out_dir()
 
-    print(f"📦 Lade Memes von {URL} ...")
-    download(URL, zippath)
+    log(f"📦 Lade Memes von {url} ...")
+    try:
+        r = requests.get(url, timeout=120)
+        r.raise_for_status()
+    except Exception as e:
+        log(f"❌ Download fehlgeschlagen: {e}")
+        sys.exit(1)
 
-    # entpacken nach temp
-    extract_dir = os.path.join(tmpdir, "extract")
-    os.makedirs(extract_dir, exist_ok=True)
-    with zipfile.ZipFile(zippath, "r") as z:
-        z.extractall(extract_dir)
+    # Versuche ZIP
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp.write(r.content)
+    tmp.flush()
+    tmp.close()
 
-    # alle Bilddateien finden (egal, ob die ZIP einen Unterordner hat)
-    moved = 0
-    for root, _, files in os.walk(extract_dir):
-        for name in files:
-            ext = os.path.splitext(name)[1].lower()
-            if ext in OK_EXT:
-                src = os.path.join(root, name)
-                # Kollisionssicheren Zielnamen erzeugen
-                base = os.path.basename(name)
-                dst = os.path.join(TARGET_DIR, base)
-                i = 1
-                while os.path.exists(dst):
-                    stem, e = os.path.splitext(base)
-                    dst = os.path.join(TARGET_DIR, f"{stem}_{i}{e}")
-                    i += 1
-                shutil.move(src, dst)
-                moved += 1
+    added = []
+    try:
+        with zipfile.ZipFile(tmp.name, "r") as zf:
+            for zi in zf.infolist():
+                if zi.is_dir():
+                    continue
+                name = os.path.basename(zi.filename)
+                if not name:
+                    continue
+                ext = safe_ext(name)
+                if not ext:
+                    continue  # nicht unterstützter Typ
 
-    # placeholder entfernen, wenn wir echte Dateien haben
-    ph = os.path.join(TARGET_DIR, "placeholder.txt")
-    if moved > 0 and os.path.exists(ph):
-        os.remove(ph)
+                data = zf.read(zi)
 
-    print(f"✅ {moved} Meme-Datei(en) nach '{TARGET_DIR}' kopiert.")
-    # kurz zeigen, was drin liegt
-    files = sorted(glob.glob(os.path.join(TARGET_DIR, "*")))
-    for f in files[:8]:
-        print("   •", os.path.basename(f))
-    if len(files) > 8:
-        print(f"   … (+{len(files)-8} weitere)")
+                # Normalisieren (WEBP → PNG, CMYK → RGB)
+                try:
+                    data, new_ext = normalize_image(data, name)
+                except Exception:
+                    # Wenn Pillow scheitert, nur erlaubte Mime als Rohdaten probieren
+                    # → Wir erzwingen PNG Fallback
+                    try:
+                        with Image.open(io.BytesIO(data)) as im:
+                            if im.mode not in ("RGB", "RGBA"):
+                                im = im.convert("RGB")
+                            buf = io.BytesIO()
+                            im.save(buf, format="PNG", optimize=True)
+                            data = buf.getvalue()
+                            new_ext = ".png"
+                    except Exception:
+                        continue
+
+                base = os.path.splitext(name)[0]
+                out_name = f"{base}{new_ext}"
+                out_path = os.path.join(OUT_DIR, out_name)
+
+                # Kollisionssicherer Name
+                n = 1
+                while os.path.exists(out_path):
+                    out_name = f"{base}_{n}{new_ext}"
+                    out_path = os.path.join(OUT_DIR, out_name)
+                    n += 1
+
+                with open(out_path, "wb") as f:
+                    f.write(data)
+                added.append(out_name)
+    except zipfile.BadZipFile:
+        # Kein ZIP? Dann versuchen wir direkte Bilddatei
+        ext = safe_ext(urlparse(url).path)
+        if not ext:
+            log("❌ Kein ZIP und unbekannte Dateiendung – bitte ZIP-Link verwenden.")
+            os.unlink(tmp.name)
+            sys.exit(1)
+        # Speichere als Einzeldatei
+        # Normalisieren:
+        try:
+            data, new_ext = normalize_image(r.content, url)
+        except Exception as e:
+            log(f"❌ Konnte Bild nicht normalisieren: {e}")
+            os.unlink(tmp.name)
+            sys.exit(1)
+        base = "meme"
+        out_path = os.path.join(OUT_DIR, f"{base}{new_ext}")
+        n = 1
+        while os.path.exists(out_path):
+            out_path = os.path.join(OUT_DIR, f"{base}_{n}{new_ext}")
+            n += 1
+        with open(out_path, "wb") as f:
+            f.write(data)
+        added.append(os.path.basename(out_path))
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+
+    if added:
+        log(f"✅ {len(added)} Meme-Datei(en) nach '{OUT_DIR}' kopiert.")
+        for i, name in enumerate(added[:8], 1):
+            log(f"   • {name}")
+        if len(added) > 8:
+            log(f"   … (+{len(added)-8} weitere)")
+    else:
+        log("⚠️ Keine neuen Memes gefunden (evtl. waren sie schon vorhanden).")
 
 if __name__ == "__main__":
     main()
-
