@@ -1,57 +1,58 @@
-# backup_state_now.py — einmaliges, manuelles Backup des Seen-States in Heroku Config
+# backup_state_now.py
+import os, sys, json, subprocess, shlex
 
-import os, json, requests
+STATE_FILE = "/tmp/state.json"
 
-STATE_PATHS = ["/tmp/state.json", "state.json"]
+def load_ids_from_file():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                ids = [str(x).strip() for x in data if str(x).strip()]
+                return ids
+        except Exception as e:
+            print(f"WARN: Konnte {STATE_FILE} nicht lesen: {e}")
+    return None
 
-HEROKU_APP_NAME = os.getenv("HEROKU_APP_NAME","").strip()
-HEROKU_API_KEY  = os.getenv("HEROKU_API_KEY","").strip()
-MAX_SEEN_IDS_FOR_CONFIG = int(os.getenv("MAX_SEEN_IDS_FOR_CONFIG","2000"))
+def load_ids_from_env():
+    env = os.getenv("STATE_SEEN_IDS", "")
+    ids = [x.strip() for x in env.split(",") if x.strip()]
+    return ids
 
-def load_state():
-    s=set()
-    env = os.getenv("STATE_SEEN_IDS","").strip()
-    if env:
-        for t in env.split(","):
-            if t.strip().isdigit():
-                s.add(t.strip())
-    for p in STATE_PATHS:
-        if os.path.exists(p):
-            try:
-                with open(p,"r",encoding="utf-8") as f:
-                    data = json.load(f)
-                    for t in data:
-                        if str(t).isdigit():
-                            s.add(str(t))
-            except Exception:
-                pass
-    return s
+def main():
+    # 1) Bevorzugt aus /tmp/state.json (Output von seed_seen.py)
+    ids = load_ids_from_file()
+    source = "file"
+    if not ids:
+        # 2) Fallback: aus ENV
+        ids = load_ids_from_env()
+        source = "env"
 
-def heroku_set_config(var_key, var_value):
-    if not HEROKU_APP_NAME or not HEROKU_API_KEY:
-        print("❌ HEROKU_APP_NAME / HEROKU_API_KEY fehlen.")
-        return False
-    url = f"https://api.heroku.com/apps/{HEROKU_APP_NAME}/config-vars"
-    headers = {
-        "Authorization": f"Bearer {HEROKU_API_KEY}",
-        "Accept": "application/vnd.heroku+json; version=3",
-        "Content-Type": "application/json",
-    }
-    r = requests.patch(url, headers=headers, json={var_key: var_value}, timeout=20)
-    if r.status_code in (200,201):
-        return True
-    print("❌ Heroku error:", r.status_code, r.text[:200])
-    return False
+    # Deduplizieren + sortieren (optional)
+    ids = sorted(set(ids))
+    print(f"INFO: Lade {len(ids)} IDs aus {source}.")
+
+    app = os.environ.get("HEROKU_APP_NAME")
+    api_key = os.environ.get("HEROKU_API_KEY")
+    if not app:
+        print("ERROR: HEROKU_APP_NAME fehlt in den Config Vars.")
+        sys.exit(1)
+    if not api_key:
+        print("ERROR: HEROKU_API_KEY fehlt in den Config Vars.")
+        sys.exit(1)
+
+    value = ",".join(ids)
+    # Achtung: große Env-Variablen gehen, aber halten wir’s schlank (du hast ~300 IDs -> ok)
+    cmd = f'heroku config:set STATE_SEEN_IDS="{value}" -a {app}'
+    print(f"INFO: Schreibe {len(ids)} IDs in STATE_SEEN_IDS …")
+    rc = subprocess.call(shlex.split(cmd))
+    if rc == 0:
+        print(f"OK: {len(ids)} IDs in STATE_SEEN_IDS gespeichert.")
+        sys.exit(0)
+    else:
+        print("ERROR: Konnte STATE_SEEN_IDS nicht setzen.")
+        sys.exit(rc)
 
 if __name__ == "__main__":
-    seen = load_state()
-    if not seen:
-        print("⚠️ Keine IDs gefunden.")
-        raise SystemExit(0)
-    ids_sorted = sorted(seen, key=lambda x:int(x))[-MAX_SEEN_IDS_FOR_CONFIG:]
-    value = ",".join(ids_sorted)
-    ok = heroku_set_config("STATE_SEEN_IDS", value)
-    if ok:
-        print(f"✅ Backup OK — {len(ids_sorted)} IDs in STATE_SEEN_IDS gespeichert.")
-    else:
-        print("❌ Backup fehlgeschlagen.")
+    main()
