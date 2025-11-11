@@ -8,6 +8,21 @@ from pathlib import Path
 import tweepy
 import requests
 
+import os, json, logging, pathlib
+logger = logging.getLogger(__name__)
+
+STATE_FILE = "/tmp/state.json"
+
+# Wenn /tmp/state.json fehlt, aus ENV (STATE_SEEN_IDS) befüllen:
+if not pathlib.Path(STATE_FILE).exists():
+    ids_env = [s for s in os.getenv("STATE_SEEN_IDS", "").split(",") if s.strip()]
+    if ids_env:
+        pathlib.Path(STATE_FILE).write_text(json.dumps(ids_env))
+        logger.info(f"Bootstrapped state from env: {len(ids_env)} IDs → /tmp/state.json")
+    else:
+        logger.info("Kein STATE_SEEN_IDS im ENV gefunden; starte ohne vorgefüllten State.")
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
