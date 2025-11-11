@@ -1,46 +1,58 @@
 import os
 import io
 import zipfile
+import logging
+import pathlib
 import requests
-from pathlib import Path
+from tempfile import NamedTemporaryFile
 
-MEME_DIR = Path("memes")
-URL = os.getenv("FETCH_MEMES_URL", "").strip()
-VALID_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+LOG = logging.getLogger("fetch_memes")
+
+ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
 def main():
-    if not URL:
-        print("ERROR: FETCH_MEMES_URL fehlt (Config Var).")
+    url = os.getenv("FETCH_MEMES_URL", "").strip()
+    memes_dir = pathlib.Path("memes")
+    memes_dir.mkdir(exist_ok=True)
+
+    if not url:
+        LOG.warning("FETCH_MEMES_URL fehlt. Überspringe Download.")
         return
 
-    MEME_DIR.mkdir(parents=True, exist_ok=True)
+    LOG.info(f"Lade Memes von {url} ...")
+    try:
+        resp = requests.get(url, timeout=60)
+        resp.raise_for_status()
 
-    print(f"INFO: Lade Memes von {URL} ...")
-    r = requests.get(URL, timeout=60)
-    r.raise_for_status()
+        with NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(resp.content)
+            tmp_path = tmp.name
 
-    buf = io.BytesIO(r.content)
-    copied = 0
-    with zipfile.ZipFile(buf) as z:
-        for zi in z.infolist():
-            if zi.is_dir():
-                continue
-            name = Path(zi.filename).name
-            ext = Path(name).suffix.lower()
-            if ext not in VALID_EXT:
-                continue
-            data = z.read(zi)
-            # max 8 MB pro Datei
-            if len(data) > 8 * 1024 * 1024:
-                continue
-            (MEME_DIR / name).write_bytes(data)
-            copied += 1
+        copied = []
+        with zipfile.ZipFile(tmp_path, "r") as zf:
+            for info in zf.infolist():
+                name = info.filename
+                if name.endswith("/"):
+                    continue
+                ext = pathlib.Path(name).suffix.lower()
+                if ext in ALLOWED_EXT:
+                    data = zf.read(name)
+                    out = memes_dir / pathlib.Path(name).name
+                    with open(out, "wb") as f:
+                        f.write(data)
+                    copied.append(out.name)
 
-    if copied:
-        print(f"OK: {copied} Meme-Datei(en) nach 'memes' kopiert.")
-    else:
-        print("WARN: Keine passenden Memes im ZIP gefunden.")
+        if copied:
+            LOG.info(f"OK: {len(copied)} Meme-Datei(en) nach 'memes' kopiert.")
+            for n in copied[:8]:
+                LOG.info(f"   • {n}")
+            if len(copied) > 8:
+                LOG.info(f"   … (+{len(copied)-8} weitere)")
+        else:
+            LOG.warning("Keine passenden Meme-Dateien im ZIP gefunden.")
+    except Exception as e:
+        LOG.error(f"Fehler beim Meme-Download: {e}")
 
 if __name__ == "__main__":
     main()
-
