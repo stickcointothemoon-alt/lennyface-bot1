@@ -1,327 +1,396 @@
 import os
 import time
+import json
+import re
 import random
 import logging
-from collections import deque
-from pathlib import Path
-
-import tweepy
 import requests
+import traceback
+from datetime import datetime, timezone
 
-import os, json, logging, pathlib
-logger = logging.getLogger(__name__)
+import tweepy  # v4.14.0 (bei dir schon installiert)
 
-STATE_FILE = "/tmp/state.json"
-
-# Wenn /tmp/state.json fehlt, aus ENV (STATE_SEEN_IDS) befüllen:
-if not pathlib.Path(STATE_FILE).exists():
-    ids_env = [s for s in os.getenv("STATE_SEEN_IDS", "").split(",") if s.strip()]
-    if ids_env:
-        pathlib.Path(STATE_FILE).write_text(json.dumps(ids_env))
-        logger.info(f"Bootstrapped state from env: {len(ids_env)} IDs → /tmp/state.json")
-    else:
-        logger.info("Kein STATE_SEEN_IDS im ENV gefunden; starte ohne vorgefüllten State.")
-
-
+# =========================
+# Logging
+# =========================
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(message)s",
 )
-log = logging.getLogger("lennybot")
+log = logging.getLogger(__name__)
 
-# ---- Config (ENV) ----
-LINE_MODE = os.getenv("LINE_MODE", "llm").lower()   # default: llm (Grok)
-REPLY_PROBABILITY = float(os.getenv("REPLY_PROBABILITY", "1.0"))
-DEX_REPLY_PROB = float(os.getenv("DEX_REPLY_PROB", "0.5"))
-ONLY_ORIGINAL = os.getenv("ONLY_ORIGINAL", "1") == "1"
-MAX_REPLIES_PER_KOL_PER_DAY = int(os.getenv("MAX_REPLIES_PER_KOL_PER_DAY", "3"))
-LOOP_SLEEP_SECONDS = int(os.getenv("LOOP_SLEEP_SECONDS", "240"))
-READ_COOLDOWN_S = int(os.getenv("READ_COOLDOWN_S", "6"))
-COOLDOWN_S = int(os.getenv("COOLDOWN_S", "300"))
-PER_KOL_MIN_POLL_S = int(os.getenv("PER_KOL_MIN_POLL_S", "1200"))
-MEME_PROBABILITY = float(os.getenv("MEME_PROBABILITY", "0.3"))
+# =========================
+# ENV / Konfiguration
+# =========================
+X_API_KEY       = os.environ.get("X_API_KEY")         # consumer key
+X_API_SECRET    = os.environ.get("X_API_SECRET")
+X_ACCESS_TOKEN  = os.environ.get("X_ACCESS_TOKEN")
+X_ACCESS_SECRET = os.environ.get("X_ACCESS_SECRET")
+X_BEARER_TOKEN  = os.environ.get("X_BEARER_TOKEN")
 
-TARGET_IDS = [s.strip() for s in os.getenv("TARGET_IDS", "").split(",") if s.strip()]
+# KOL IDs (kommagetrennt), z. B. "111,222,333"
+TARGET_IDS      = [t.strip() for t in os.environ.get("TARGET_IDS","").split(",") if t.strip()]
 
-# Grok (x.ai)
-GROK_API_KEY = os.getenv("GROK_API_KEY")
-GROK_BASE_URL = os.getenv("GROK_BASE_URL", "https://api.x.ai")
-GROK_MODEL = os.getenv("GROK_MODEL", "grok-3")
+# Timing / Limits
+READ_COOLDOWN_S       = int(os.environ.get("READ_COOLDOWN_S", "6"))
+PER_KOL_MIN_POLL_S    = int(os.environ.get("PER_KOL_MIN_POLL_S", "1200"))
+LOOP_SLEEP_SECONDS    = int(os.environ.get("LOOP_SLEEP_SECONDS", "240"))
+MAX_REPLIES_PER_KOL_PER_DAY = int(os.environ.get("MAX_REPLIES_PER_KOL_PER_DAY", "3"))
 
-# ---- Twitter Clients ----
-def build_clients():
-    ck = os.getenv("X_API_KEY")
-    cs = os.getenv("X_API_SECRET")
-    at = os.getenv("X_ACCESS_TOKEN")
-    ats = os.getenv("X_ACCESS_SECRET")
-    bt = os.getenv("X_BEARER_TOKEN")  # new
+# Wahrscheinlichkeit
+REPLY_PROBABILITY     = float(os.environ.get("REPLY_PROBABILITY", "1.0"))
+DEX_REPLY_PROB        = float(os.environ.get("DEX_REPLY_PROB", "0.5"))
+ONLY_ORIGINAL         = os.environ.get("ONLY_ORIGINAL", "1") == "1"
 
-    if not bt:
-        raise RuntimeError("X_BEARER_TOKEN fehlt – wird zum Lesen benötigt (verhindert 401).")
-    if not all([ck, cs, at, ats]):
-        raise RuntimeError("Twitter Keys fehlen (X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_SECRET).")
+# Meme-Frequenz
+MEME_PROBABILITY      = float(os.environ.get("MEME_PROBABILITY", "0.3"))
 
-    read_client_v2 = tweepy.Client(bearer_token=bt, wait_on_rate_limit=True)
-    post_client_v2 = tweepy.Client(
-        consumer_key=ck,
-        consumer_secret=cs,
-        access_token=at,
-        access_token_secret=ats,
+# Grok
+GROK_API_KEY   = os.environ.get("GROK_API_KEY","")
+GROK_BASE_URL  = os.environ.get("GROK_BASE_URL","https://api.x.ai")
+GROK_MODEL     = os.environ.get("GROK_MODEL","grok-3")
+
+# Heroku-Config schreiben (für STATE_SEEN_IDS Backup)
+HEROKU_API_KEY  = os.environ.get("HEROKU_API_KEY","")
+HEROKU_APP_NAME = os.environ.get("HEROKU_APP_NAME","")
+
+# Handle für Mentions-Check (ohne @)
+BOT_HANDLE = os.environ.get("BOT_HANDLE", "lennyface_bot").lstrip("@")
+
+# =========================
+# Clients: v2 + v1.1
+# =========================
+def make_clients():
+    # v2 Client (lesen & tweeten)
+    v2 = tweepy.Client(
+        bearer_token=X_BEARER_TOKEN,
+        consumer_key=X_API_KEY,
+        consumer_secret=X_API_SECRET,
+        access_token=X_ACCESS_TOKEN,
+        access_token_secret=X_ACCESS_SECRET,
         wait_on_rate_limit=True,
     )
-    auth = tweepy.OAuth1UserHandler(ck, cs, at, ats)
-    api_v11 = tweepy.API(auth, wait_on_rate_limit=True)
-    return read_client_v2, post_client_v2, api_v11
+    # v1.1 API (nur für Media Upload)
+    auth = tweepy.OAuth1UserHandler(
+        X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET
+    )
+    v1 = tweepy.API(auth, wait_on_rate_limit=True)
+    return v2, v1
 
-read_client, client, api_v1 = build_clients()
+client, api_v1 = make_clients()
 
-# ---- Memes ----
-ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+# =========================
+# SEEN / State
+# =========================
+SEEN = set()
+def load_seen_from_env():
+    raw = os.environ.get("STATE_SEEN_IDS","").strip()
+    if not raw:
+        return
+    for token in re.split(r"[,\s]+", raw):
+        if token.isdigit():
+            SEEN.add(token)
 
-def pick_meme(memes_dir="memes") -> str | None:
-    p = Path(memes_dir)
-    if not p.exists():
-        return None
-    cand = [x for x in p.iterdir() if x.suffix.lower() in ALLOWED_EXT and x.is_file()]
-    if not cand:
-        return None
-    return str(random.choice(cand))
-
-# ---- Grok completions (English) ----
-def grok_complete(prompt: str, max_tokens: int = 60) -> str | None:
-    if not GROK_API_KEY:
-        return None
+def _set_config_vars(patch: dict):
+    """Schreibt Werte in Heroku Config Vars (ohne CLI)."""
+    if not (HEROKU_API_KEY and HEROKU_APP_NAME):
+        return  # lokal leise ignorieren
+    url = f"https://api.heroku.com/apps/{HEROKU_APP_NAME}/config-vars"
+    headers = {
+        "Authorization": f"Bearer {HEROKU_API_KEY}",
+        "Accept": "application/vnd.heroku+json; version=3",
+        "Content-Type": "application/json",
+    }
     try:
-        url = f"{GROK_BASE_URL.rstrip('/')}/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {GROK_API_KEY}"}
-        payload = {
-            "model": GROK_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You speak concise, witty, cheeky ENGLISH. "
-                        "Always include $LENNY in every reply. "
-                        "No @mentions, no links. Keep it under ~18 words."
-                    )
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "max_tokens": max_tokens,
-            "temperature": 0.9,
-        }
-        r = requests.post(url, json=payload, headers=headers, timeout=20)
+        r = requests.patch(url, headers=headers, data=json.dumps(patch), timeout=10)
         r.raise_for_status()
-        data = r.json()
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        log.warning(f"Grok request failed: {e}")
-        return None
-
-_LAST_TEXTS = deque(maxlen=120)
-EMOJIS = ["🚀","🌕","🔥","😎","💎","✨","🧠","🌀"]
-TAGLINES = ["Powered by $LENNY","#Lenny #Solana","Join the wave $LENNY","meme magic ( ͡° ͜ʖ ͡°)","LENNY > fiat"]
-SHUFFLE_HASHTAGS = ["#Lenny","#Solana","#Memecoins","#Crypto","#WAGMI","#Chads"]
-
-def _mix_hashtags() -> str:
-    tags = random.sample(SHUFFLE_HASHTAGS, k=random.randint(2,3))
-    return " ".join(tags)
-
-def _variant_tail() -> str:
-    parts = []
-    if random.random() < 0.7: parts.append(random.choice(EMOJIS))
-    if random.random() < 0.7: parts.append(random.choice(TAGLINES))
-    if random.random() < 0.7: parts.append(_mix_hashtags())
-    parts = [p for p in parts if p]
-    return (" " + " ".join(parts)) if parts else ""
-
-def build_reply_text(ctx: str) -> str:
-    base = None
-    if LINE_MODE == "llm" and GROK_API_KEY:
-        prompt = (
-            "Write a very short, cheeky ENGLISH reply (≤18 words). "
-            "Be witty and a bit bold. ALWAYS include $LENNY. "
-            "No @mentions. No links. Context: " + repr(ctx[:220])
-        )
-        base = grok_complete(prompt)
-
-    if not base:
-        fallback = [
-            "LENNY moves fast—catch the wave. $LENNY",
-            "If it pumps, it’s $LENNY. Simple.",
-            "Stronger every dip. $LENNY",
-            "Buy memes, stay wise. $LENNY",
-            "Talk less, send more. $LENNY",
-        ]
-        base = random.choice(fallback)
-
-    if "$LENNY" not in base:
-        base = f"{base} $LENNY"
-
-    for _ in range(4):
-        out = (base + random.choice(["", " •", " —", " |"])) + _variant_tail()
-        out = out.strip()
-        if out not in _LAST_TEXTS:
-            _LAST_TEXTS.append(out)
-            return out
-
-    salt = str(random.randint(123, 987))
-    out = f"{base} {salt}"
-    _LAST_TEXTS.append(out)
-    return out
-
-# ---- Robust posting (no 'media='/'reply=' kwargs) ----
-def post_reply_robust(client_v2: tweepy.Client,
-                      api_v1: tweepy.API,
-                      text: str,
-                      reply_to_id: str | int | None = None,
-                      media_path: str | None = None):
-    media_ids = None
-
-    if media_path:
-        try:
-            up = api_v1.media_upload(filename=media_path)
-            media_ids = [up.media_id]
-        except Exception as e:
-            log.warning(f"Meme upload failed: {e}. Sending without image.")
-            media_ids = None
-
-    try:
-        if reply_to_id and media_ids:
-            return client_v2.create_tweet(
-                text=text,
-                in_reply_to_tweet_id=str(reply_to_id),
-                media_ids=media_ids
-            )
-        elif reply_to_id:
-            return client_v2.create_tweet(
-                text=text,
-                in_reply_to_tweet_id=str(reply_to_id)
-            )
-        elif media_ids:
-            return client_v2.create_tweet(text=text, media_ids=media_ids)
-        else:
-            return client_v2.create_tweet(text=text)
-    except TypeError as te:
-        log.warning(f"create_tweet TypeError: {te}. Falling back to v1.1.")
-    except Exception as e:
-        log.warning(f"create_tweet v2 failed: {e}. Falling back to v1.1.")
-
-    if reply_to_id and media_ids:
-        return api_v1.update_status(
-            status=text,
-            in_reply_to_status_id=reply_to_id,
-            auto_populate_reply_metadata=True,
-            media_ids=media_ids
-        )
-    elif reply_to_id:
-        return api_v1.update_status(
-            status=text,
-            in_reply_to_status_id=reply_to_id,
-            auto_populate_reply_metadata=True
-        )
-    elif media_ids:
-        return api_v1.update_status(status=text, media_ids=media_ids)
-    else:
-        return api_v1.update_status(status=text)
-
-# ---- Simple in-process seen state ----
-SEEN_IDS: set[str] = set()
-
-_env_seen = (os.getenv("STATE_SEEN_IDS") or "").strip()
-if _env_seen:
-    try:
-        parts = [p.strip() for p in _env_seen.split(",") if p.strip().isdigit()]
-        SEEN_IDS.update(parts)
+        # lokale Env im Dyno aktualisieren, damit spätere Zugriffe den Wert sehen
+        for k,v in patch.items():
+            os.environ[k] = v
     except Exception:
         pass
 
-def have_seen(tid: str) -> bool:
-    return tid in SEEN_IDS
+_since_backup = 0
+_BACKUP_EVERY = 30  # nach 30 neuen IDs sichern
 
-def mark_seen(tid: str):
-    SEEN_IDS.add(tid)
+def already_replied(tweet_id: str) -> bool:
+    return tweet_id in SEEN
 
-# ---- Polling & reply loop ----
-def fetch_recent_tweets(read_client_v2: tweepy.Client, user_id: str, since_id: str | None = None):
-    params = {
-        "max_results": 10,
-        "tweet_fields": "created_at,public_metrics,referenced_tweets,author_id",
-    }
+def remember_and_maybe_backup(tweet_id: str):
+    """Tweet-ID merken und nach X neuen IDs in STATE_SEEN_IDS schreiben."""
+    global _since_backup
+    if tweet_id and tweet_id.isdigit() and tweet_id not in SEEN:
+        SEEN.add(tweet_id)
+        _since_backup += 1
+    if _since_backup >= _BACKUP_EVERY:
+        _since_backup = 0
+        csv = ",".join(SEEN)
+        _set_config_vars({"STATE_SEEN_IDS": csv})
+        log.info("State backup: %d IDs in STATE_SEEN_IDS gespeichert.", len(SEEN))
+
+def save_seen_now():
+    csv = ",".join(SEEN)
+    _set_config_vars({"STATE_SEEN_IDS": csv})
+    log.info("State backup (manual): %d IDs gespeichert.", len(SEEN))
+
+load_seen_from_env()
+log.info("State loaded: %d replied tweet IDs remembered", len(SEEN))
+
+# =========================
+# Helfer: Grok
+# =========================
+GROK_SYSTEM_PROMPT = (
+    "You are LENNY, a cheeky but helpful shill-bot who ALWAYS shills $LENNY. "
+    "Reply in short, punchy, funny English. Avoid duplicate text, vary wording. "
+    "Add 1-2 crypto hashtags (e.g., #Lenny #Solana #Memecoins) when relevant."
+)
+
+def grok_generate(prompt: str) -> str:
+    if not GROK_API_KEY:
+        return ""
     try:
-        if since_id:
-            resp = read_client_v2.get_users_tweets(id=user_id, since_id=since_id, **params)
-        else:
-            resp = read_client_v2.get_users_tweets(id=user_id, **params)
-        tweets = resp.data or []
-        if ONLY_ORIGINAL:
-            filtered = []
-            for t in tweets:
-                refs = getattr(t, "referenced_tweets", None) or []
-                is_rt_or_reply = any(r.type in ("replied_to", "retweeted") for r in refs)
-                if not is_rt_or_reply:
-                    filtered.append(t)
-            return filtered
-        return tweets
+        url = f"{GROK_BASE_URL}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {GROK_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": GROK_MODEL,
+            "messages": [
+                {"role":"system","content":GROK_SYSTEM_PROMPT},
+                {"role":"user","content":prompt},
+            ],
+            "temperature": 0.9,
+            "max_tokens": 96,
+        }
+        r = requests.post(url, headers=headers, json=payload, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        text = data["choices"][0]["message"]["content"].strip()
+        return text
     except Exception as e:
-        log.warning(f"Fetch tweets failed for {user_id}: {e}")
+        log.warning("Grok failed: %s", e)
+        return ""
+
+def fallback_shill():
+    templates = [
+        "LENNY strong. $LENNY to the 🌕 ( ͡° ͜ʖ ͡°) #Lenny #Solana",
+        "Oi, that’s cute—now watch $LENNY run. 🌕 #Memecoins #Lenny",
+        "Chads hold $LENNY, paper hands fold. Your move. #Crypto #Lenny",
+    ]
+    return random.choice(templates)
+
+# =========================
+# Helfer: Tweets holen
+# =========================
+def fetch_user_tweets(user_id: str, since_id: str|None=None):
+    """
+    Holt die neusten Tweets eines Users (exclude: replies/retweets je nach ONLY_ORIGINAL).
+    Liefert Liste von tweepy.Tweet-Objekten (neuste zuerst).
+    """
+    try:
+        exclude = ["retweets"]
+        if ONLY_ORIGINAL:
+            exclude.append("replies")
+        resp = client.get_users_tweets(
+            id=user_id,
+            max_results=10,
+            since_id=since_id,
+            exclude=exclude
+        )
+        if not resp or not resp.data:
+            return []
+        return list(resp.data)
+    except tweepy.TweepyException as e:
+        if "429" in str(e) or "Too Many Requests" in str(e):
+            log.warning("Rate limit exceeded. Sleeping for %d seconds.", LOOP_SLEEP_SECONDS)
+            time.sleep(LOOP_SLEEP_SECONDS)
+            return []
+        log.warning("Fetch tweets failed for %s: %s", user_id, e)
+        return []
+    except Exception as e:
+        log.warning("Fetch tweets failed for %s: %s", user_id, e)
         return []
 
-def main_loop():
-    if not TARGET_IDS:
-        log.error("TARGET_IDS is empty.")
-        return
-
+def fetch_mentions(my_user_id: str, since_id: str|None=None):
     try:
-        me = client.get_me()
-        handle = me.data.username if me and me.data else "unknown"
-    except Exception:
-        handle = "unknown"
-    log.info(f"Started as @{handle} — targets: {len(TARGET_IDS)}")
-    log.info(f"State loaded: {len(SEEN_IDS)} replied tweet IDs remembered")
+        resp = client.get_users_mentions(
+            id=my_user_id,
+            since_id=since_id,
+            max_results=10,
+        )
+        if not resp or not resp.data:
+            return []
+        return list(resp.data)
+    except tweepy.TweepyException as e:
+        if "429" in str(e) or "Too Many Requests" in str(e):
+            log.warning("Rate limit exceeded. Sleeping for %d seconds.", LOOP_SLEEP_SECONDS)
+            time.sleep(LOOP_SLEEP_SECONDS)
+            return []
+        log.warning("Fetch mentions failed: %s", e)
+        return []
+    except Exception as e:
+        log.warning("Fetch mentions failed: %s", e)
+        return []
 
-    last_poll = {uid: 0.0 for uid in TARGET_IDS}
-    since_map = {uid: None for uid in TARGET_IDS}
-    per_user_count = {uid: 0 for uid in TARGET_IDS}
+# =========================
+# Media Upload (v1.1) + Tweet (v2)
+# =========================
+def choose_meme(path="memes"):
+    try:
+        files = [f for f in os.listdir(path) if f.lower().endswith((".jpg",".jpeg",".png",".gif"))]
+        if not files:
+            return None
+        return os.path.join(path, random.choice(files))
+    except Exception:
+        return None
+
+def upload_media_get_id(filepath: str) -> str|None:
+    try:
+        media = api_v1.media_upload(filename=filepath)
+        return media.media_id_string
+    except Exception as e:
+        log.warning("Meme upload failed: %s", e)
+        return None
+
+def post_reply(text: str, in_reply_to: str, with_meme: bool):
+    media_ids = None
+    if with_meme:
+        meme = choose_meme("memes")
+        if meme:
+            mid = upload_media_get_id(meme)
+            if mid:
+                media_ids = [mid]
+    # create_tweet v2
+    if media_ids:
+        return client.create_tweet(text=text, in_reply_to_tweet_id=in_reply_to, media_ids=media_ids)
+    else:
+        return client.create_tweet(text=text, in_reply_to_tweet_id=in_reply_to)
+
+# =========================
+# Reply-Text bauen
+# =========================
+def build_reply_text(context_snippet: str = "") -> str:
+    prompt = (
+        "Write a short, cheeky, non-repetitive shill reply for $LENNY. "
+        "Keep it under 200 chars. Vary wording vs. previous ones. "
+        f"Context: {context_snippet[:140]}"
+    )
+    txt = grok_generate(prompt) if GROK_API_KEY else ""
+    if not txt:
+        txt = fallback_shill()
+    # kleine Entdopplung
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return txt
+
+# =========================
+# Main Loop
+# =========================
+def main():
+    # Eigene User-ID herausfinden
+    me = client.get_me()
+    my_user_id = str(me.data.id)
+    log.info("Started as @%s — targets: %d", BOT_HANDLE, len(TARGET_IDS))
+
+    # pro-User Grenzen / Zeitstempel
+    last_checked = {uid: 0 for uid in TARGET_IDS}
+    replies_today = {uid: 0 for uid in TARGET_IDS}
+    day_marker = datetime.now(timezone.utc).date()
+
+    last_mention_since = None
+    last_kol_since = {uid: None for uid in TARGET_IDS}
 
     while True:
-        now = time.time()
-        for uid in TARGET_IDS:
-            if now - last_poll[uid] < PER_KOL_MIN_POLL_S:
-                continue
-            last_poll[uid] = now
+        try:
+            # Tageswechsel reset
+            today = datetime.now(timezone.utc).date()
+            if today != day_marker:
+                day_marker = today
+                replies_today = {uid: 0 for uid in TARGET_IDS}
 
-            tweets = fetch_recent_tweets(read_client, uid, since_map[uid])
-            if tweets:
-                since_map[uid] = max(str(t.id) for t in tweets)
+            # 1) Mentions beantworten (Bot wird angepingt)
+            ments = fetch_mentions(my_user_id, since_id=last_mention_since)
+            if ments:
+                # chronologisch von alt -> neu antworten
+                for tw in sorted(ments, key=lambda x: int(x.id)):
+                    tid = str(tw.id)
+                    last_mention_since = tid
+                    if already_replied(tid):
+                        continue
+                    if random.random() > REPLY_PROBABILITY:
+                        continue
+                    text = build_reply_text(tw.text or "")
+                    with_meme = (random.random() < MEME_PROBABILITY)
+                    try:
+                        post_reply(text, tid, with_meme)
+                        remember_and_maybe_backup(tid)
+                        log.info("Reply → %s | %s%s",
+                                 tid, text, " [+meme]" if with_meme else "")
+                        time.sleep(READ_COOLDOWN_S)
+                    except tweepy.TweepyException as e:
+                        if "duplicate" in str(e).lower():
+                            log.warning("Duplicate content blocked; skipping.")
+                            remember_and_maybe_backup(tid)  # trotzdem merken
+                        else:
+                            log.warning("Reply fehlgeschlagen: %s", e)
+                    except Exception as e:
+                        log.warning("Reply fehlgeschlagen: %s", e)
 
-            for t in tweets:
-                tid = str(t.id)
-                if have_seen(tid):
+            # 2) KOL Timelines
+            now = time.time()
+            for uid in TARGET_IDS:
+                if now - last_checked[uid] < PER_KOL_MIN_POLL_S:
                     continue
-                if per_user_count[uid] >= MAX_REPLIES_PER_KOL_PER_DAY:
-                    continue
-                if random.random() > REPLY_PROBABILITY:
-                    continue
+                last_checked[uid] = now
 
-                original_text = getattr(t, "text", "") or ""
-                body = build_reply_text(original_text)
-                media_path = pick_meme("memes") if random.random() < MEME_PROBABILITY else None
+                tweets = fetch_user_tweets(uid, since_id=last_kol_since.get(uid))
+                if tweets:
+                    # von alt -> neu
+                    for tw in sorted(tweets, key=lambda x: int(x.id)):
+                        tid = str(tw.id)
+                        last_kol_since[uid] = tid
 
-                try:
-                    post_reply_robust(client_v2=client, api_v1=api_v1,
-                                      text=body, reply_to_id=tid, media_path=media_path)
-                    mark_seen(tid)
-                    per_user_count[uid] += 1
-                    suffix = " [+meme]" if media_path else ""
-                    log.info(f"Reply → {tid} | {body}{suffix}")
-                    time.sleep(READ_COOLDOWN_S)
-                except Exception as e:
-                    log.warning(f"Reply failed: {e}")
+                        if already_replied(tid):
+                            continue
+                        if replies_today[uid] >= MAX_REPLIES_PER_KOL_PER_DAY:
+                            continue
+                        if ONLY_ORIGINAL and hasattr(tw, "referenced_tweets") and tw.referenced_tweets:
+                            # Sicherheitshalber, falls exclude nicht greift
+                            continue
 
-            time.sleep(1)
+                        if random.random() > REPLY_PROBABILITY:
+                            continue
 
-        time.sleep(LOOP_SLEEP_SECONDS)
+                        text = build_reply_text(tw.text or "")
+                        with_meme = (random.random() < MEME_PROBABILITY)
+
+                        try:
+                            post_reply(text, tid, with_meme)
+                            remember_and_maybe_backup(tid)
+                            replies_today[uid] += 1
+                            log.info("Reply → %s | %s%s",
+                                     tid, text, " [+meme]" if with_meme else "")
+                            time.sleep(READ_COOLDOWN_S)
+                        except tweepy.TweepyException as e:
+                            # Duplicate content block → als gesehen markieren, damit wir nicht hängenbleiben
+                            if "duplicate" in str(e).lower():
+                                log.warning("Duplicate content blocked; skipping.")
+                                remember_and_maybe_backup(tid)
+                            elif "429" in str(e) or "Too Many Requests" in str(e):
+                                log.warning("Rate limit exceeded. Sleeping for %d seconds.", LOOP_SLEEP_SECONDS)
+                                time.sleep(LOOP_SLEEP_SECONDS)
+                            else:
+                                log.warning("Reply fehlgeschlagen: %s", e)
+                        except Exception as e:
+                            log.warning("Reply fehlgeschlagen: %s", e)
+
+            time.sleep(LOOP_SLEEP_SECONDS)
+
+        except Exception as e:
+            log.error("Loop error: %s", e)
+            traceback.print_exc()
+            # Crash vermeiden, kurze Pause
+            time.sleep(10)
 
 if __name__ == "__main__":
-    main_loop()
+    main()
