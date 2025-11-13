@@ -356,6 +356,31 @@ def update_targets():
     key = request.args.get("key", "")
     return redirect(url_for("index", key=key))
 
+# -----------------------------
+# GROK SETTINGS
+# -----------------------------
+@app.route("/update_grok", methods=["POST"])
+def update_grok():
+    require_key()
+
+    tone = request.form.get("grok_tone", "normal")
+
+    force_en = "1" if request.form.get("grok_force_en") == "1" else "0"
+    always_lenny = "1" if request.form.get("grok_always_lenny") == "1" else "0"
+
+    extra = request.form.get("grok_extra", "")
+
+    heroku_set_config({
+        "GROK_TONE": tone,
+        "GROK_FORCE_ENGLISH": force_en,
+        "GROK_ALWAYS_SHILL_LENNY": always_lenny,
+        "GROK_EXTRA_PROMPT": extra,
+    })
+
+    key = request.args.get("key", "")
+    return redirect(url_for("index", key=key))
+
+
 
 # -----------------------------
 # HANDLE → ID CONVERTER
@@ -454,3 +479,4 @@ def trigger_seed_backup():
 if __name__ == "__main__":
     # lokal zum Testen
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+
