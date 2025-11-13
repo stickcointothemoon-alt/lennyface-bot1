@@ -8,7 +8,7 @@ import requests
 import traceback
 from datetime import datetime, timezone
 
-import tweepy  # v4.14.0 (bei dir schon installiert)
+import tweepy  # v4.14.0
 
 # =========================
 # Logging
@@ -50,12 +50,18 @@ GROK_API_KEY   = os.environ.get("GROK_API_KEY","")
 GROK_BASE_URL  = os.environ.get("GROK_BASE_URL","https://api.x.ai")
 GROK_MODEL     = os.environ.get("GROK_MODEL","grok-3")
 
+# Grok-Dashboard-Settings
+GROK_TONE             = os.environ.get("GROK_TONE", "normal")  # soft / normal / spicy / savage
+GROK_FORCE_ENGLISH    = os.environ.get("GROK_FORCE_ENGLISH", "1") == "1"
+GROK_ALWAYS_SHILL     = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1") == "1"
+GROK_EXTRA_PROMPT     = os.environ.get("GROK_EXTRA_PROMPT", "")
+
 # Heroku-Config schreiben (für STATE_SEEN_IDS Backup)
 HEROKU_API_KEY  = os.environ.get("HEROKU_API_KEY","")
 HEROKU_APP_NAME = os.environ.get("HEROKU_APP_NAME","")
 
 # Handle für Mentions-Check (ohne @)
-BOT_HANDLE = os.environ.get("BOT_HANDLE", "lennyface_bot").lstrip("@")
+BOT_HANDLE = os.environ.get("BOT_HANDLE", "lennyface_bot").lstrip("@").lower()
 
 # =========================
 # Clients: v2 + v1.1
@@ -83,6 +89,7 @@ client, api_v1 = make_clients()
 # SEEN / State
 # =========================
 SEEN = set()
+
 def load_seen_from_env():
     raw = os.environ.get("STATE_SEEN_IDS","").strip()
     if not raw:
@@ -139,11 +146,35 @@ log.info("State loaded: %d replied tweet IDs remembered", len(SEEN))
 # =========================
 # Helfer: Grok
 # =========================
-GROK_SYSTEM_PROMPT = (
-    "You are LENNY, a cheeky but helpful shill-bot who ALWAYS shills $LENNY. "
-    "Reply in short, punchy, funny English. Avoid duplicate text, vary wording. "
-    "Add 1-2 crypto hashtags (e.g., #Lenny #Solana #Memecoins) when relevant."
-)
+def build_system_prompt() -> str:
+    base = "You are LENNY, a cheeky but helpful shill-bot."
+    if GROK_ALWAYS_SHILL:
+        base += " You ALWAYS shill $LENNY and keep it playful but sharp."
+
+    # Ton
+    if GROK_TONE == "soft":
+        base += " Be kind, positive and slightly cheeky, never rude."
+    elif GROK_TONE == "spicy":
+        base += " Be edgy, witty and a bit savage, but don't cross into harassment."
+    elif GROK_TONE == "savage":
+        base += " Be very savage, dark-humored and brutally honest, but no hate-speech or slurs."
+    else:
+        base += " Be confident, funny and slightly sarcastic."
+
+    # Sprache
+    if GROK_FORCE_ENGLISH:
+        base += " Always reply in English, even if the tweet is in another language."
+
+    # Kurz halten
+    base += " Keep replies short and punchy, ideally under 200 characters. Avoid repeating the same sentences."
+
+    # Extra Prompt
+    if GROK_EXTRA_PROMPT:
+        base += " Extra instructions: " + GROK_EXTRA_PROMPT
+
+    return base
+
+GROK_SYSTEM_PROMPT = build_system_prompt()
 
 def grok_generate(prompt: str) -> str:
     if not GROK_API_KEY:
@@ -213,11 +244,16 @@ def fetch_user_tweets(user_id: str, since_id: str|None=None):
         return []
 
 def fetch_mentions(my_user_id: str, since_id: str|None=None):
+    """
+    Holt Mentions des Bots, inkl. entities, damit wir prüfen können,
+    ob es ein Direct Ping ist.
+    """
     try:
         resp = client.get_users_mentions(
             id=my_user_id,
             since_id=since_id,
             max_results=10,
+            tweet_fields=["entities"],
         )
         if not resp or not resp.data:
             return []
@@ -232,6 +268,32 @@ def fetch_mentions(my_user_id: str, since_id: str|None=None):
     except Exception as e:
         log.warning("Fetch mentions failed: %s", e)
         return []
+
+# =========================
+# Direct-Ping-Check
+# =========================
+def is_direct_ping(tweet) -> bool:
+    """
+    True, wenn im Tweet NUR @BOT_HANDLE erwähnt wird.
+    Also: Mentions-Liste existiert und das einzige distinct-Username ist unser Bot.
+    """
+    ents = getattr(tweet, "entities", None)
+    if not ents or "mentions" not in ents:
+        # Wenn X uns keine Entities gibt, behandeln wir es als direct ping,
+        # damit nichts Wichtiges verloren geht.
+        return True
+
+    usernames = []
+    for m in ents.get("mentions", []):
+        uname = m.get("username")
+        if uname:
+            usernames.append(uname.lower())
+
+    if not usernames:
+        return True  # sehr selten, aber dann behandeln wir es als direct ping
+
+    unique = set(usernames)
+    return unique == {BOT_HANDLE}
 
 # =========================
 # Media Upload (v1.1) + Tweet (v2)
@@ -302,6 +364,12 @@ def main():
 
     while True:
         try:
+            # BOT_PAUSED respektieren
+            if os.environ.get("BOT_PAUSED", "0") == "1":
+                log.info("BOT_PAUSED=1 → Sleeping %d seconds.", LOOP_SLEEP_SECONDS)
+                time.sleep(LOOP_SLEEP_SECONDS)
+                continue
+
             # Tageswechsel reset
             today = datetime.now(timezone.utc).date()
             if today != day_marker:
@@ -317,6 +385,9 @@ def main():
                     last_mention_since = tid
                     if already_replied(tid):
                         continue
+                    # NEU: nur direct pings (keine anderen User erwähnt)
+                    if not is_direct_ping(tw):
+                        continue
                     if random.random() > REPLY_PROBABILITY:
                         continue
                     text = build_reply_text(tw.text or "")
@@ -324,13 +395,23 @@ def main():
                     try:
                         post_reply(text, tid, with_meme)
                         remember_and_maybe_backup(tid)
-                        log.info("Reply → %s | %s%s",
-                                 tid, text, " [+meme]" if with_meme else "")
+                        log.info(
+                            "Reply (mention) → %s | %s%s",
+                            tid,
+                            text,
+                            " [+meme]" if with_meme else "",
+                        )
                         time.sleep(READ_COOLDOWN_S)
                     except tweepy.TweepyException as e:
                         if "duplicate" in str(e).lower():
                             log.warning("Duplicate content blocked; skipping.")
                             remember_and_maybe_backup(tid)  # trotzdem merken
+                        elif "429" in str(e) or "Too Many Requests" in str(e):
+                            log.warning(
+                                "Rate limit exceeded. Sleeping for %d seconds.",
+                                LOOP_SLEEP_SECONDS,
+                            )
+                            time.sleep(LOOP_SLEEP_SECONDS)
                         else:
                             log.warning("Reply fehlgeschlagen: %s", e)
                     except Exception as e:
@@ -368,8 +449,12 @@ def main():
                             post_reply(text, tid, with_meme)
                             remember_and_maybe_backup(tid)
                             replies_today[uid] += 1
-                            log.info("Reply → %s | %s%s",
-                                     tid, text, " [+meme]" if with_meme else "")
+                            log.info(
+                                "Reply (KOL) → %s | %s%s",
+                                tid,
+                                text,
+                                " [+meme]" if with_meme else "",
+                            )
                             time.sleep(READ_COOLDOWN_S)
                         except tweepy.TweepyException as e:
                             # Duplicate content block → als gesehen markieren, damit wir nicht hängenbleiben
@@ -377,7 +462,10 @@ def main():
                                 log.warning("Duplicate content blocked; skipping.")
                                 remember_and_maybe_backup(tid)
                             elif "429" in str(e) or "Too Many Requests" in str(e):
-                                log.warning("Rate limit exceeded. Sleeping for %d seconds.", LOOP_SLEEP_SECONDS)
+                                log.warning(
+                                    "Rate limit exceeded. Sleeping for %d seconds.",
+                                    LOOP_SLEEP_SECONDS,
+                                )
                                 time.sleep(LOOP_SLEEP_SECONDS)
                             else:
                                 log.warning("Reply fehlgeschlagen: %s", e)
