@@ -6,7 +6,7 @@ import random
 import logging
 import requests
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import tweepy  # v4.14.0
 
@@ -49,6 +49,16 @@ MEME_PROBABILITY      = float(os.environ.get("MEME_PROBABILITY", "0.3"))
 GROK_API_KEY   = os.environ.get("GROK_API_KEY","")
 GROK_BASE_URL  = os.environ.get("GROK_BASE_URL","https://api.x.ai")
 GROK_MODEL     = os.environ.get("GROK_MODEL","grok-3")
+
+# Grok Tone / Extra Settings (vom Dashboard)
+GROK_TONE             = os.environ.get("GROK_TONE", "normal")              # soft / normal / spicy / savage
+GROK_FORCE_ENGLISH    = os.environ.get("GROK_FORCE_ENGLISH", "1")          # "1" = immer Englisch
+GROK_ALWAYS_SHILL_LENNY = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1")   # "1" = immer $LENNY erwähnen
+GROK_EXTRA_PROMPT     = os.environ.get("GROK_EXTRA_PROMPT", "")            # extra Text aus dem Dashboard
+
+# Lenny DEX / Token
+LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
+DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 
 # Heroku-Config schreiben (für STATE_SEEN_IDS Backup)
 HEROKU_API_KEY  = os.environ.get("HEROKU_API_KEY","")
@@ -140,11 +150,49 @@ log.info("State loaded: %d replied tweet IDs remembered", len(SEEN))
 # =========================
 # Helfer: Grok
 # =========================
-GROK_SYSTEM_PROMPT = (
-    "You are LENNY, a cheeky but helpful shill-bot who ALWAYS shills $LENNY. "
-    "Reply in short, punchy, funny English. Avoid duplicate text, vary wording. "
-    "Add 1-2 crypto hashtags (e.g., #Lenny #Solana #Memecoins) when relevant."
-)
+def build_grok_system_prompt() -> str:
+    """
+    Baut den System-Prompt für Grok dynamisch,
+    je nach Tone / Force English / Always Lenny / Extra Prompt.
+    """
+    base = (
+        "You are LENNY, a cheeky, degen-style shill-bot for the $LENNY token. "
+        "Reply in short, punchy, funny style. Avoid duplicate text, vary wording. "
+        "Always keep replies suitable for public social media."
+    )
+
+    # Ton einstellen
+    tone = (GROK_TONE or "normal").lower()
+    if tone == "soft":
+        base += " Keep your tone friendly, kind and low aggression. No insults, just playful fun."
+    elif tone == "spicy":
+        base += " You may be a bit edgy and teasing, but avoid real toxicity or hate speech."
+    elif tone == "savage":
+        base += (
+            " Use a savage, roasting style with strong banter, but never use slurs, "
+            "hate speech, or real-life threats. Keep it fun and within platform rules."
+        )
+    else:  # normal
+        base += " Use a balanced degen tone: fun, confident, slightly cheeky."
+
+    # Immer Englisch?
+    if GROK_FORCE_ENGLISH == "1":
+        base += " Always respond in English, even if the user writes in another language."
+
+    # Immer $LENNY shillen?
+    if GROK_ALWAYS_SHILL_LENNY == "1":
+        base += " Always mention $LENNY somewhere in the reply, unless it would be completely out of context."
+
+    # Extra Prompt aus dem Dashboard
+    extra = (GROK_EXTRA_PROMPT or "").strip()
+    if extra:
+        base += " Extra style instructions: " + extra
+
+    # Hashtags-Hinweis
+    base += " Add 1-2 fitting crypto or meme hashtags when relevant."
+
+    return base
+
 
 def grok_generate(prompt: str) -> str:
     if not GROK_API_KEY:
@@ -158,8 +206,8 @@ def grok_generate(prompt: str) -> str:
         payload = {
             "model": GROK_MODEL,
             "messages": [
-                {"role":"system","content":GROK_SYSTEM_PROMPT},
-                {"role":"user","content":prompt},
+                {"role": "system", "content": build_grok_system_prompt()},
+                {"role": "user", "content": prompt},
             ],
             "temperature": 0.9,
             "max_tokens": 96,
@@ -173,6 +221,7 @@ def grok_generate(prompt: str) -> str:
         log.warning("Grok failed: %s", e)
         return ""
 
+
 def fallback_shill():
     templates = [
         "LENNY strong. $LENNY to the 🌕 ( ͡° ͜ʖ ͡°) #Lenny #Solana",
@@ -180,6 +229,118 @@ def fallback_shill():
         "Chads hold $LENNY, paper hands fold. Your move. #Crypto #Lenny",
     ]
     return random.choice(templates)
+
+# =========================
+# Market-Helpers (DEX)
+# =========================
+def format_number(n: float) -> str:
+    """Zahlen hübsch formatieren (K, M, B)."""
+    if n >= 1_000_000_000:
+        return f"{n/1_000_000_000:.2f}B"
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.2f}M"
+    if n >= 1_000:
+        return f"{n/1_000:.2f}K"
+    return f"{n:.4f}"
+
+def fetch_lenny_stats():
+    """
+    Holt Preis, MC und 24h Volumen von Dexscreener.
+    Nutzt DEX_TOKEN_URL, sonst LENNY_TOKEN_CA.
+    Gibt dict oder None zurück.
+    """
+    if DEX_TOKEN_URL:
+        url = DEX_TOKEN_URL
+    else:
+        if not LENNY_TOKEN_CA:
+            log.warning("LENNY_TOKEN_CA fehlt – kann keine DEX-Daten holen.")
+            return None
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{LENNY_TOKEN_CA}"
+
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        pairs = data.get("pairs") or []
+        if not pairs:
+            log.warning("Keine Pair-Daten von Dex erhalten.")
+            return None
+
+        pair = pairs[0]
+        price = float(pair.get("priceUsd") or 0)
+        mc = float(pair.get("fdv") or pair.get("marketCap") or 0)
+        vol24 = float(
+            (pair.get("volume") or {}).get("h24")
+            or pair.get("volume24h")
+            or 0
+        )
+
+        return {
+            "price": price,
+            "mc": mc,
+            "vol24": vol24,
+            "dex_name": pair.get("dexId", ""),
+            "pair_url": pair.get("url", ""),
+        }
+    except Exception as e:
+        log.warning("DEX-Request fehlgeschlagen: %s", e)
+        return None
+
+def build_market_reply(context_snippet: str = "") -> str:
+    """
+    Antwortet mit Preis/MC/Vol + Lenny-Spruch.
+    Nutzt Grok wenn möglich.
+    """
+    stats = fetch_lenny_stats()
+    if not stats:
+        txt = (
+            "Can’t reach the $LENNY oracle right now, try again later ( ͡° ͜ʖ ͡°) "
+            "#Lenny #Solana"
+        )
+        return txt
+
+    price = stats["price"]
+    mc = stats["mc"]
+    vol = stats["vol24"]
+
+    price_str = f"${price:.6f}" if price < 1 else f"${price:.4f}"
+    mc_str = format_number(mc)
+    vol_str = format_number(vol)
+
+    fallback = (
+        f"$LENNY stats ( ͡° ͜ʖ ͡°) "
+        f"Price: {price_str} | MC: {mc_str} | 24h Vol: {vol_str} "
+        "#Lenny #Solana #Memecoins"
+    )
+
+    if not GROK_API_KEY:
+        return fallback
+
+    ctx = (
+        f"User message: {context_snippet[:140]}. "
+        f"Numbers: Price {price_str}, Market Cap {mc_str}, 24h Volume {vol_str}."
+    )
+    prompt = (
+        "User asks about the price/market cap/volume of $LENNY. "
+        "Write a very short, cheeky answer in degen style, include the Lennyface ( ͡° ͜ʖ ͡°) "
+        "and 1-2 crypto hashtags. Use the numbers I give you. "
+        f"Context: {ctx}"
+    )
+
+    txt = grok_generate(prompt) or fallback
+
+    # sicherstellen, dass das Lennyface drin ist
+    if "( ͡° ͜ʖ ͡°)" not in txt:
+        txt += " ( ͡° ͜ʖ ͡°)"
+
+    # Bot-Handle entfernen, falls Grok es reinschreibt
+    try:
+        pattern = re.compile(rf"@{re.escape(BOT_HANDLE)}", re.IGNORECASE)
+        txt = pattern.sub("", txt)
+    except Exception:
+        pass
+
+    return re.sub(r"\s+", " ", txt).strip()
 
 # =========================
 # Helfer: Tweets holen
@@ -197,7 +358,8 @@ def fetch_user_tweets(user_id: str, since_id: str|None=None):
             id=user_id,
             max_results=10,
             since_id=since_id,
-            exclude=exclude
+            exclude=exclude,
+            tweet_fields=["created_at"],
         )
         if not resp or not resp.data:
             return []
@@ -296,6 +458,12 @@ def build_reply_text(context_snippet: str = "") -> str:
 # Main Loop
 # =========================
 def main():
+
+    # *** NEU: Start-Delay verhindert sofortiges Rate-Limit nach Deploy ***
+    log.info("Warte 30 Sekunden, um Rate-Limit nach Deploy zu vermeiden…")
+    time.sleep(30)
+    # *** ENDE NEU ***
+
     # Eigene User-ID herausfinden
     me = client.get_me()
     my_user_id = str(me.data.id)
@@ -307,23 +475,16 @@ def main():
     day_marker = datetime.now(timezone.utc).date()
 
     last_mention_since = None
-
-    # KOL-Startzustand:
-    # Für jeden KOL holen wir ein Mal die aktuellen Tweets
-    # und merken uns den neuesten – auf alles davor antwortet der Bot nicht.
-    last_kol_since = {}
-    for uid in TARGET_IDS:
-        tweets = fetch_user_tweets(uid, since_id=None)
-        if tweets:
-            newest = max(tweets, key=lambda x: int(x.id))
-            last_kol_since[uid] = str(newest.id)
-            log.info("Init last_kol_since[%s] = %s (nur neue Tweets ab jetzt)", uid, newest.id)
-        else:
-            last_kol_since[uid] = None
-            log.info("Init last_kol_since[%s] = None (noch keine Tweets gefunden)", uid)
+    last_kol_since = {uid: None for uid in TARGET_IDS}
 
     while True:
         try:
+            # Bot pausieren über ENV
+            if os.environ.get("BOT_PAUSED", "0") == "1":
+                log.info("BOT_PAUSED=1 → Bot pausiert, schlafe nur.")
+                time.sleep(LOOP_SLEEP_SECONDS)
+                continue
+
             # Tageswechsel reset
             today = datetime.now(timezone.utc).date()
             if today != day_marker:
@@ -362,7 +523,18 @@ def main():
                     if random.random() > REPLY_PROBABILITY:
                         continue
 
-                    text = build_reply_text(src)
+                    # prüfen, ob jemand nach Price/MC/Stats fragt
+                    src_lower = src.lower()
+                    wants_stats = any(k in src_lower for k in [
+                        "price", " mc", "market cap", "marketcap",
+                        "volume", "vol ", "stats", "chart"
+                    ])
+
+                    if wants_stats:
+                        text = build_market_reply(src)
+                    else:
+                        text = build_reply_text(src)
+
                     with_meme = (random.random() < MEME_PROBABILITY)
                     try:
                         post_reply(text, tid, with_meme)
@@ -394,6 +566,12 @@ def main():
                     for tw in sorted(tweets, key=lambda x: int(x.id)):
                         tid = str(tw.id)
                         last_kol_since[uid] = tid
+
+                        # alte Tweets (älter als 3 Tage) ignorieren
+                        if hasattr(tw, "created_at") and tw.created_at:
+                            age = datetime.now(timezone.utc) - tw.created_at
+                            if age > timedelta(days=3):
+                                continue
 
                         if already_replied(tid):
                             continue
