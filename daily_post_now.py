@@ -7,7 +7,7 @@ from datetime import datetime
 import requests
 import tweepy
 
-# Wir nutzen Funktionen/Clients aus deinem Bot
+# Wir nutzen Funktionen/Clients aus deinem Haupt-Bot
 from bot_basic import client, upload_media_get_id, choose_meme, grok_generate
 
 log = logging.getLogger(__name__)
@@ -111,18 +111,35 @@ def build_daily_text(stats):
     return final
 
 
-def main():
-    print("📅 Starte LENNY Daily-Post (mit Grok)...")
+def ensure_memes_downloaded():
+    """
+    Ruft fetch_memes.main() auf, damit dieser One-off-Dyno
+    sich selbst Memes von der Dropbox-URL zieht.
+    """
+    try:
+        import fetch_memes
+        print("🧷 Hole Memes über fetch_memes.py ...")
+        fetch_memes.main()
+        print("✅ Memes geladen (falls ZIP verfügbar war).")
+    except Exception as e:
+        print(f"⚠️ Konnte fetch_memes nicht ausführen: {e}")
 
-    # 1) Stats holen
+
+def main():
+    print("📅 Starte LENNY Daily-Post (mit Grok & Memes)...")
+
+    # 1) Memes sicherstellen (Dropbox → memes/ Ordner)
+    ensure_memes_downloaded()
+
+    # 2) Stats holen
     stats = fetch_lenny_stats()
 
-    # 2) Text bauen (Grok + Fallback)
+    # 3) Text bauen (Grok + Fallback)
     text = build_daily_text(stats)
     print("Tweet-Text:")
     print(text)
 
-    # 3) Meme wählen
+    # 4) Meme wählen
     media_ids = None
     try:
         meme_path = choose_meme("memes")
@@ -133,7 +150,7 @@ def main():
     except Exception as e:
         print(f"⚠️ Meme-Upload fehlgeschlagen (poste nur Text): {e}")
 
-    # 4) Tweet senden (mit Duplicate-Fallback)
+    # 5) Tweet senden (mit Duplicate-Fallback)
     try:
         if media_ids:
             client.create_tweet(text=text, media_ids=media_ids)
@@ -160,4 +177,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
