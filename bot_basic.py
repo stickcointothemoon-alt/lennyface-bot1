@@ -307,7 +307,20 @@ def main():
     day_marker = datetime.now(timezone.utc).date()
 
     last_mention_since = None
-    last_kol_since = {uid: None for uid in TARGET_IDS}
+
+    # KOL-Startzustand:
+    # Für jeden KOL holen wir ein Mal die aktuellen Tweets
+    # und merken uns den neuesten – auf alles davor antwortet der Bot nicht.
+    last_kol_since = {}
+    for uid in TARGET_IDS:
+        tweets = fetch_user_tweets(uid, since_id=None)
+        if tweets:
+            newest = max(tweets, key=lambda x: int(x.id))
+            last_kol_since[uid] = str(newest.id)
+            log.info("Init last_kol_since[%s] = %s (nur neue Tweets ab jetzt)", uid, newest.id)
+        else:
+            last_kol_since[uid] = None
+            log.info("Init last_kol_since[%s] = None (noch keine Tweets gefunden)", uid)
 
     while True:
         try:
@@ -367,28 +380,14 @@ def main():
                         log.warning("Reply fehlgeschlagen: %s", e)
 
             # 2) KOL Timelines
-               # pro-User Grenzen / Zeitstempel
-    last_checked = {uid: 0 for uid in TARGET_IDS}
-    replies_today = {uid: 0 for uid in TARGET_IDS}
-    day_marker = datetime.now(timezone.utc).date()
+            now = time.time()
+            for uid in TARGET_IDS:
+                if now - last_checked[uid] < PER_KOL_MIN_POLL_S:
+                    continue
+                last_checked[uid] = now
 
-    last_mention_since = None
-
-    # Hier merken wir uns für jeden KOL:
-    # "Was ist der aktuellste Tweet JETZT?"
-    # → Auf alles, was davor war, antwortet der Bot NICHT.
-    last_kol_since = {}
-    for uid in TARGET_IDS:
-        tweets = fetch_user_tweets(uid, since_id=None)
-        if tweets:
-            # nehme den neuesten Tweet (größte ID)
-            newest = max(tweets, key=lambda x: int(x.id))
-            last_kol_since[uid] = str(newest.id)
-            log.info("Init last_kol_since[%s] = %s (nur neue Tweets ab jetzt)", uid, newest.id)
-        else:
-            # KOL hat keine Tweets → warten, bis später was Neues kommt
-            last_kol_since[uid] = None
-
+                tweets = fetch_user_tweets(uid, since_id=last_kol_since.get(uid))
+                log.info("KOL %s: fetched %d tweets", uid, len(tweets))
 
                 if tweets:
                     # von alt -> neu
