@@ -7,7 +7,7 @@ from datetime import datetime
 import requests
 import tweepy
 
-# Wir nutzen Funktionen/Clients aus deinem Haupt-Bot
+# Wir nutzen Funktionen/Clients aus deinem Bot
 from bot_basic import client, upload_media_get_id, choose_meme, grok_generate
 
 log = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ def fetch_lenny_stats():
     """
     Holt Price / MC / 24h Vol für $LENNY von Dexscreener.
     Nutzt DEX_TOKEN_URL (API!) oder LENNY_TOKEN_CA.
-    Gibt ein dict mit hübschen Strings zurück oder None.
+    Gibt ein dict mit Zahlen UND formatierten Strings zurück oder None.
     """
     if DEX_TOKEN_URL:
         url = DEX_TOKEN_URL
@@ -60,11 +60,12 @@ def fetch_lenny_stats():
 
         price_str = f"${price:.6f}" if price < 1 else f"${price:.4f}"
         stats = {
+            "price": price,
+            "mc": mc,
+            "vol24": vol24,
             "price_str": price_str,
             "mc_str": fmt(mc),
             "vol_str": fmt(vol24),
-            "dex_name": pair.get("dexId", ""),
-            "pair_url": pair.get("url", ""),
         }
         log.info("LENNY Stats: %s", stats)
         return stats
@@ -73,26 +74,54 @@ def fetch_lenny_stats():
         return None
 
 
+
 def build_daily_text(stats):
     """
     Baut den Daily-Post-Text mit Hilfe von Grok.
-    Falls Grok nicht geht, nehmen wir ein Fallback.
+    Nutzt zusätzlich eine kleine Einschätzung je nach MC / Vol für mehr Würze.
     """
     base_fallback = "LENNY daily dose. $LENNY ( ͡° ͜ʖ ͡°) #Lenny #Solana #Memecoins"
 
     if stats:
+        price_str = stats["price_str"]
+        mc_str    = stats["mc_str"]
+        vol_str   = stats["vol_str"]
+        mc_val    = stats["mc"]
+        vol_val   = stats["vol24"]
+
+        # einfache "Stimmungslogik"
+        mood_bits = []
+
+        # MC-Stimmung
+        if mc_val < 300_000:
+            mood_bits.append("This is still ultra early degen territory.")
+        elif mc_val < 1_000_000:
+            mood_bits.append("Still early but clearly waking up.")
+        elif mc_val < 5_000_000:
+            mood_bits.append("Mid-cap meme in motion, momentum building.")
+        else:
+            mood_bits.append("Big boy territory, but still degen potential left.")
+
+        # Volumen-Stimmung
+        if vol_val < 5_000:
+            mood_bits.append("Volume is low, feels like stealth accumulation.")
+        elif vol_val < 50_000:
+            mood_bits.append("Volume is healthy, degens are warming up.")
+        else:
+            mood_bits.append("Volume is raging, full degen mode right now.")
+
+        sentiment = " ".join(mood_bits)
+
         context = (
-            f"Price: {stats['price_str']}, "
-            f"MC: {stats['mc_str']}, "
-            f"24h Vol: {stats['vol_str']}"
+            f"Price: {price_str}, MC: {mc_str}, 24h Vol: {vol_str}. "
+            f"Sentiment: {sentiment}"
         )
     else:
         context = "No fresh stats available, but still degen bullish."
 
-    # Prompt für Grok
     prompt = (
         "Create a short daily tweet for the $LENNY token. "
-        "Use this status: " + context + ". "
+        "Use this status: " + context + " "
         "Keep it under 220 characters. "
         "Use the Lenny face ( ͡° ͜ʖ ͡°) somewhere. "
         "Sound cheeky, fun and degen, but safe for social media. "
@@ -111,35 +140,19 @@ def build_daily_text(stats):
     return final
 
 
-def ensure_memes_downloaded():
-    """
-    Ruft fetch_memes.main() auf, damit dieser One-off-Dyno
-    sich selbst Memes von der Dropbox-URL zieht.
-    """
-    try:
-        import fetch_memes
-        print("🧷 Hole Memes über fetch_memes.py ...")
-        fetch_memes.main()
-        print("✅ Memes geladen (falls ZIP verfügbar war).")
-    except Exception as e:
-        print(f"⚠️ Konnte fetch_memes nicht ausführen: {e}")
-
 
 def main():
-    print("📅 Starte LENNY Daily-Post (mit Grok & Memes)...")
+    print("📅 Starte LENNY Daily-Post (mit Grok)...")
 
-    # 1) Memes sicherstellen (Dropbox → memes/ Ordner)
-    ensure_memes_downloaded()
-
-    # 2) Stats holen
+    # 1) Stats holen
     stats = fetch_lenny_stats()
 
-    # 3) Text bauen (Grok + Fallback)
+    # 2) Text bauen (Grok + Fallback)
     text = build_daily_text(stats)
     print("Tweet-Text:")
     print(text)
 
-    # 4) Meme wählen
+    # 3) Meme wählen
     media_ids = None
     try:
         meme_path = choose_meme("memes")
@@ -150,7 +163,7 @@ def main():
     except Exception as e:
         print(f"⚠️ Meme-Upload fehlgeschlagen (poste nur Text): {e}")
 
-    # 5) Tweet senden (mit Duplicate-Fallback)
+    # 4) Tweet senden (mit Duplicate-Fallback)
     try:
         if media_ids:
             client.create_tweet(text=text, media_ids=media_ids)
