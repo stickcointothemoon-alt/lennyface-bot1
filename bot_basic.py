@@ -350,15 +350,92 @@ def build_market_reply(context_snippet: str = "") -> str:
 # =========================
 def build_help_reply() -> str:
     """
-    Kurz-Help in EN, inkl. Hinweis auf Lore & Stats.
+    Kurz-Help in EN, mit Commands untereinander.
     """
     txt = (
-        "Yo anon, I'm LennyBot ( ͡° ͜ʖ ͡°), powered by the OG 2012 Lennyface meme. "
-        "Tag me alone to get shill replies for $LENNY. "
-        "Ask about 'price', 'mc' or 'stats' and I'll reply with live data. "
-        "Say 'lore' for the full story. Sometimes I drop memes too. #Lenny #Solana"
+        "Yo anon, I'm LennyBot ( ͡° ͜ʖ ͡°), powered by the OG 2012 Lennyface meme.\n"
+        "\n"
+        "Commands:\n"
+        "- @lennyface_bot help  → show this help.\n"
+        "- @lennyface_bot lore  → Lenny history / meme lore.\n"
+        "- ask 'price', 'mc', 'stats' → live $LENNY price / MC / volume.\n"
+        "- say 'alpha'          → quick degen alpha line.\n"
+        "- say 'gm'             → degen good-morning vibe.\n"
+        "- say 'roast' or 'roast me' → light roast, but still friendly.\n"
+        "\n"
+        "Always tag only me in the tweet for a reply. Sometimes I drop memes too. #Lenny #Solana"
     )
     return txt
+def build_alpha_reply(context_snippet: str = "") -> str:
+    """
+    Kurze 'alpha'-Antwort – degen, aber nicht zu lang.
+    """
+    if GROK_API_KEY:
+        prompt = (
+            "User asks for alpha or alpha call about $LENNY or crypto. "
+            "Answer with a very short, spicy but still friendly degen-style alpha line. "
+            "Mention $LENNY and add the Lennyface ( ͡° ͜ʖ ͡°) plus 1-2 hashtags. "
+            f"Context: {context_snippet[:160]}"
+        )
+        txt = grok_generate(prompt)
+        if txt:
+            if "( ͡° ͜ʖ ͡°)" not in txt:
+                txt += " ( ͡° ͜ʖ ͡°)"
+            return re.sub(r"\s+", " ", txt).strip()
+
+    # Fallback ohne Grok
+    return (
+        "Alpha? Simple, anon: stack $LENNY, ignore the noise and let memes work "
+        "their magic ( ͡° ͜ʖ ͡°) #Lenny #CryptoAlpha"
+    )
+
+
+def build_gm_reply(context_snippet: str = "") -> str:
+    """
+    'gm'-Antwort – freundlich, degen, kurz.
+    """
+    if GROK_API_KEY:
+        prompt = (
+            "User greets with 'gm' or good morning. "
+            "Reply with a short, positive degen-style GM message mentioning $LENNY, "
+            "include the Lennyface ( ͡° ͜ʖ ͡°) and 1-2 crypto hashtags. "
+            f"Context: {context_snippet[:160]}"
+        )
+        txt = grok_generate(prompt)
+        if txt:
+            if "( ͡° ͜ʖ ͡°)" not in txt:
+                txt += " ( ͡° ͜ʖ ͡°)"
+            return re.sub(r"\s+", " ", txt).strip()
+
+    return (
+        "gm gm anon, grab your coffee and your $LENNY bags – new day, new memes "
+        "( ͡° ͜ʖ ͡°) #gm #Lenny"
+    )
+
+
+def build_roast_reply(context_snippet: str = "") -> str:
+    """
+    'roast'-Antwort – frech, aber nicht toxisch.
+    """
+    if GROK_API_KEY:
+        prompt = (
+            "User asks to be roasted. "
+            "Write a very short, playful roast in degen style. "
+            "It must NOT be hateful or use slurs. Just light banter. "
+            "Mention $LENNY and include ( ͡° ͜ʖ ͡°) plus 1-2 crypto hashtags. "
+            f"Context: {context_snippet[:160]}"
+        )
+        txt = grok_generate(prompt)
+        if txt:
+            if "( ͡° ͜ʖ ͡°)" not in txt:
+                txt += " ( ͡° ͜ʖ ͡°)"
+            return re.sub(r"\s+", " ", txt).strip()
+
+    return (
+        "You want a roast? Bro, your entry timing is as bad as a top-buy degen, "
+        "but at least you found $LENNY ( ͡° ͜ʖ ͡°) #Roasted #Lenny"
+    )
+
 
 def build_lore_reply() -> str:
     """
@@ -545,26 +622,37 @@ def main():
                     if random.random() > REPLY_PROBABILITY:
                         continue
 
-                    src_lower = src.lower()
+                   src_lower = src.lower()
 
-                    # *** Spezielle Commands: lore & help (nur Englisch) ***
-                    wants_lore = "lore" in src_lower
-                    wants_help = "help" in src_lower
+# *** Spezielle Commands: lore, help, alpha, gm, roast ***
+wants_lore  = "lore" in src_lower
+wants_help  = "help" in src_lower
+wants_alpha = "alpha" in src_lower
+wants_gm    = src_lower.startswith("gm") or " gm" in src_lower
+wants_roast = "roast me" in src_lower or " roast" in src_lower
+
 
                     if wants_lore:
-                        text = build_lore_reply()
-                    elif wants_help:
-                        text = build_help_reply()
-                    else:
-                        # prüfen, ob jemand nach Price/MC/Stats fragt
-                        wants_stats = any(k in src_lower for k in [
-                            "price", " mc", "market cap", "marketcap",
-                            "volume", "vol ", "stats", "chart"
-                        ])
-                        if wants_stats:
-                            text = build_market_reply(src)
-                        else:
-                            text = build_reply_text(src)
+    text = build_lore_reply()
+elif wants_help:
+    text = build_help_reply()
+elif wants_alpha:
+    text = build_alpha_reply(src)
+elif wants_gm:
+    text = build_gm_reply(src)
+elif wants_roast:
+    text = build_roast_reply(src)
+else:
+    # prüfen, ob jemand nach Price/MC/Stats fragt
+    wants_stats = any(k in src_lower for k in [
+        "price", " mc", "market cap", "marketcap",
+        "volume", "vol ", "stats", "chart"
+    ])
+    if wants_stats:
+        text = build_market_reply(src)
+    else:
+        text = build_reply_text(src)
+
 
                     with_meme = (random.random() < MEME_PROBABILITY)
                     try:
