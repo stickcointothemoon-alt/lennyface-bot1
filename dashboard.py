@@ -16,17 +16,17 @@ HEROKU_API_KEY  = os.environ.get("HEROKU_API_KEY")
 LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
 DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 
-# Grok Settings (werden nur für Preview genutzt)
-GROK_API_KEY          = os.environ.get("GROK_API_KEY", "")
-GROK_BASE_URL         = os.environ.get("GROK_BASE_URL", "https://api.x.ai")
-GROK_MODEL            = os.environ.get("GROK_MODEL", "grok-3")
-GROK_TONE             = os.environ.get("GROK_TONE", "normal")
-GROK_FORCE_ENGLISH    = os.environ.get("GROK_FORCE_ENGLISH", "1")
-GROK_ALWAYS_SHILL_LENNY = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1")
-GROK_EXTRA_PROMPT     = os.environ.get("GROK_EXTRA_PROMPT", "")
+# BOT Handle (nur für Anzeige im Help-Block)
+BOT_HANDLE = os.environ.get("BOT_HANDLE", "lennyface_bot").lstrip("@")
 
-# Bot Handle (für Anzeige im Dashboard)
-BOT_HANDLE = os.environ.get("BOT_HANDLE", "lennyface_bot")
+# Grok Settings (werden nur für Preview genutzt)
+GROK_API_KEY            = os.environ.get("GROK_API_KEY", "")
+GROK_BASE_URL           = os.environ.get("GROK_BASE_URL", "https://api.x.ai")
+GROK_MODEL              = os.environ.get("GROK_MODEL", "grok-3")
+GROK_TONE               = os.environ.get("GROK_TONE", "normal")
+GROK_FORCE_ENGLISH      = os.environ.get("GROK_FORCE_ENGLISH", "1")
+GROK_ALWAYS_SHILL_LENNY = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1")
+GROK_EXTRA_PROMPT       = os.environ.get("GROK_EXTRA_PROMPT", "")
 
 
 # -----------------------------
@@ -556,16 +556,17 @@ def render_dashboard(preview_text: str | None = None):
     <small>Nutze das, um zu testen, wie Lenny in deinem aktuellen Tone/Prompt antwortet – ohne X-API Limit.</small>
   </div>
 
+  <!-- HELP / COMMANDS -->
   <div class="card">
     <h2>Bot Commands / Usage</h2>
     <p class="stat-line">
-      How to interact with <strong>@{{ BOT_HANDLE }}</strong>:
+      How to interact with <strong>@{{ bot_handle }}</strong>:
     </p>
     <pre>
-@lennyface_bot help
+@{{ bot_handle }} help
   → Show full help menu.
 
-@lennyface_bot lore
+@{{ bot_handle }} lore
   → Lenny ( ͡° ͜ʖ ͡°) meme history / big facts.
 
 Contains: price / mc / stats / volume / chart
@@ -612,7 +613,7 @@ Contains: roast / "roast me"
         lenny_stats=lenny_stats,
         global_stats=global_stats,
         preview_text=preview_text,
-        BOT_HANDLE=BOT_HANDLE,
+        bot_handle=BOT_HANDLE,
     )
 
 
