@@ -123,7 +123,7 @@ def _set_config_vars(patch: dict):
         pass
 
 _since_backup = 0
-_BACKUP_EVERY = 30  # nach 30 neuen IDs sichern
+_BACKUP_EVERY = 1  # nach JEDER neuen ID sichern
 
 def already_replied(tweet_id: str) -> bool:
     return tweet_id in SEEN
@@ -638,4 +638,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
