@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 # =========================
 # ENV / Konfiguration
 # =========================
+# X API Keys
 X_API_KEY       = os.environ.get("X_API_KEY")         # consumer key
 X_API_SECRET    = os.environ.get("X_API_SECRET")
 X_ACCESS_TOKEN  = os.environ.get("X_ACCESS_TOKEN")
@@ -29,7 +30,7 @@ X_ACCESS_SECRET = os.environ.get("X_ACCESS_SECRET")
 X_BEARER_TOKEN  = os.environ.get("X_BEARER_TOKEN")
 
 # KOL IDs (kommagetrennt), z. B. "111,222,333"
-TARGET_IDS      = [t.strip() for t in os.environ.get("TARGET_IDS","").split(",") if t.strip()]
+TARGET_IDS = [t.strip() for t in os.environ.get("TARGET_IDS", "").split(",") if t.strip()]
 
 # Timing / Limits
 READ_COOLDOWN_S       = int(os.environ.get("READ_COOLDOWN_S", "6"))
@@ -38,31 +39,31 @@ LOOP_SLEEP_SECONDS    = int(os.environ.get("LOOP_SLEEP_SECONDS", "240"))   # 4 m
 MAX_REPLIES_PER_KOL_PER_DAY = int(os.environ.get("MAX_REPLIES_PER_KOL_PER_DAY", "3"))
 
 # Wahrscheinlichkeit
-REPLY_PROBABILITY     = float(os.environ.get("REPLY_PROBABILITY", "1.0"))
-DEX_REPLY_PROB        = float(os.environ.get("DEX_REPLY_PROB", "0.5"))
-ONLY_ORIGINAL         = os.environ.get("ONLY_ORIGINAL", "1") == "1"
+REPLY_PROBABILITY = float(os.environ.get("REPLY_PROBABILITY", "1.0"))
+DEX_REPLY_PROB    = float(os.environ.get("DEX_REPLY_PROB", "0.5"))  # aktuell nicht genutzt
+ONLY_ORIGINAL     = os.environ.get("ONLY_ORIGINAL", "1") == "1"
 
 # Meme-Frequenz
-MEME_PROBABILITY      = float(os.environ.get("MEME_PROBABILITY", "0.3"))
+MEME_PROBABILITY = float(os.environ.get("MEME_PROBABILITY", "0.3"))
 
 # Grok
-GROK_API_KEY   = os.environ.get("GROK_API_KEY","")
-GROK_BASE_URL  = os.environ.get("GROK_BASE_URL","https://api.x.ai")
-GROK_MODEL     = os.environ.get("GROK_MODEL","grok-3")
+GROK_API_KEY   = os.environ.get("GROK_API_KEY", "")
+GROK_BASE_URL  = os.environ.get("GROK_BASE_URL", "https://api.x.ai")
+GROK_MODEL     = os.environ.get("GROK_MODEL", "grok-3")
 
 # Grok Tone / Extra Settings (vom Dashboard)
-GROK_TONE             = os.environ.get("GROK_TONE", "normal")              # soft / normal / spicy / savage
-GROK_FORCE_ENGLISH    = os.environ.get("GROK_FORCE_ENGLISH", "1")          # "1" = immer Englisch
+GROK_TONE               = os.environ.get("GROK_TONE", "normal")            # soft / normal / spicy / savage
+GROK_FORCE_ENGLISH      = os.environ.get("GROK_FORCE_ENGLISH", "1")        # "1" = immer Englisch
 GROK_ALWAYS_SHILL_LENNY = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1")   # "1" = immer $LENNY erwähnen
-GROK_EXTRA_PROMPT     = os.environ.get("GROK_EXTRA_PROMPT", "")            # extra Text aus dem Dashboard
+GROK_EXTRA_PROMPT       = os.environ.get("GROK_EXTRA_PROMPT", "")          # extra Text aus dem Dashboard
 
 # Lenny DEX / Token
 LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
 DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 
 # Heroku-Config schreiben (für STATE_SEEN_IDS Backup)
-HEROKU_API_KEY  = os.environ.get("HEROKU_API_KEY","")
-HEROKU_APP_NAME = os.environ.get("HEROKU_APP_NAME","")
+HEROKU_API_KEY  = os.environ.get("HEROKU_API_KEY", "")
+HEROKU_APP_NAME = os.environ.get("HEROKU_APP_NAME", "")
 
 # Handle für Mentions-Check (ohne @)
 BOT_HANDLE = os.environ.get("BOT_HANDLE", "lennyface_bot").lstrip("@")
@@ -95,7 +96,7 @@ client, api_v1 = make_clients()
 SEEN = set()
 
 def load_seen_from_env():
-    raw = os.environ.get("STATE_SEEN_IDS","").strip()
+    raw = os.environ.get("STATE_SEEN_IDS", "").strip()
     if not raw:
         return
     for token in re.split(r"[,\s]+", raw):
@@ -116,7 +117,7 @@ def _set_config_vars(patch: dict):
         r = requests.patch(url, headers=headers, data=json.dumps(patch), timeout=10)
         r.raise_for_status()
         # lokale Env im Dyno aktualisieren
-        for k,v in patch.items():
+        for k, v in patch.items():
             os.environ[k] = v
     except Exception:
         pass
@@ -193,7 +194,6 @@ def build_grok_system_prompt() -> str:
 
     return base
 
-
 def grok_generate(prompt: str) -> str:
     if not GROK_API_KEY:
         return ""
@@ -221,7 +221,6 @@ def grok_generate(prompt: str) -> str:
         log.warning("Grok failed: %s", e)
         return ""
 
-
 def fallback_shill():
     templates = [
         "LENNY strong. $LENNY to the 🌕 ( ͡° ͜ʖ ͡°) #Lenny #Solana",
@@ -243,7 +242,7 @@ def format_number(n: float) -> str:
         return f"{n/1_000:.2f}K"
     return f"{n:.4f}"
 
-def fetch_lenny_stats():
+def fetch_lenny_stats_for_bot():
     """
     Holt Preis, MC und 24h Volumen von Dexscreener.
     Nutzt DEX_TOKEN_URL, sonst LENNY_TOKEN_CA.
@@ -268,30 +267,33 @@ def fetch_lenny_stats():
 
         pair = pairs[0]
         price = float(pair.get("priceUsd") or 0)
-        mc = float(pair.get("fdv") or pair.get("marketCap") or 0)
+        mc    = float(pair.get("fdv") or pair.get("marketCap") or 0)
         vol24 = float(
             (pair.get("volume") or {}).get("h24")
             or pair.get("volume24h")
             or 0
         )
 
-        return {
+        stats = {
             "price": price,
             "mc": mc,
             "vol24": vol24,
-            "dex_name": pair.get("dexId", ""),
-            "pair_url": pair.get("url", ""),
+            "price_str": f"${price:.6f}" if price < 1 else f"${price:.4f}",
+            "mc_str": format_number(mc),
+            "vol_str": format_number(vol24),
         }
+        log.info("LENNY Stats (Reply): %s", stats)
+        return stats
     except Exception as e:
-        log.warning("DEX-Request fehlgeschlagen: %s", e)
+        log.warning("DEX-Request im Reply-Bot fehlgeschlagen: %s", e)
         return None
 
 def build_market_reply(context_snippet: str = "") -> str:
     """
     Antwortet mit Preis/MC/Vol + Lenny-Spruch.
-    Nutzt Grok wenn möglich.
+    Nutzt Grok, fällt sonst auf festen Text zurück.
     """
-    stats = fetch_lenny_stats()
+    stats = fetch_lenny_stats_for_bot()
     if not stats:
         txt = (
             "Can’t reach the $LENNY oracle right now, try again later ( ͡° ͜ʖ ͡°) "
@@ -299,13 +301,9 @@ def build_market_reply(context_snippet: str = "") -> str:
         )
         return txt
 
-    price = stats["price"]
-    mc = stats["mc"]
-    vol = stats["vol24"]
-
-    price_str = f"${price:.6f}" if price < 1 else f"${price:.4f}"
-    mc_str = format_number(mc)
-    vol_str = format_number(vol)
+    price_str = stats["price_str"]
+    mc_str    = stats["mc_str"]
+    vol_str   = stats["vol_str"]
 
     fallback = (
         f"$LENNY stats ( ͡° ͜ʖ ͡°) "
@@ -345,7 +343,7 @@ def build_market_reply(context_snippet: str = "") -> str:
 # =========================
 # Helfer: Tweets holen
 # =========================
-def fetch_user_tweets(user_id: str, since_id: str|None=None):
+def fetch_user_tweets(user_id: str, since_id: str | None = None):
     """
     Holt die neusten Tweets eines Users (exclude: replies/retweets je nach ONLY_ORIGINAL).
     Liefert Liste von tweepy.Tweet-Objekten (neuste zuerst).
@@ -375,7 +373,7 @@ def fetch_user_tweets(user_id: str, since_id: str|None=None):
         log.warning("Fetch tweets failed for %s: %s", user_id, e)
         return []
 
-def fetch_mentions(my_user_id: str, since_id: str|None=None):
+def fetch_mentions(my_user_id: str, since_id: str | None = None):
     try:
         resp = client.get_users_mentions(
             id=my_user_id,
@@ -401,14 +399,18 @@ def fetch_mentions(my_user_id: str, since_id: str|None=None):
 # =========================
 def choose_meme(path="memes"):
     try:
-        files = [f for f in os.listdir(path) if f.lower().endswith((".jpg",".jpeg",".png",".gif"))]
+        files = [
+            f
+            for f in os.listdir(path)
+            if f.lower().endswith((".jpg", ".jpeg", ".png", ".gif"))
+        ]
         if not files:
             return None
         return os.path.join(path, random.choice(files))
     except Exception:
         return None
 
-def upload_media_get_id(filepath: str) -> str|None:
+def upload_media_get_id(filepath: str) -> str | None:
     try:
         media = api_v1.media_upload(filename=filepath)
         return media.media_id_string
@@ -426,12 +428,14 @@ def post_reply(text: str, in_reply_to: str, with_meme: bool):
                 media_ids = [mid]
     # create_tweet v2
     if media_ids:
-        return client.create_tweet(text=text, in_reply_to_tweet_id=in_reply_to, media_ids=media_ids)
+        return client.create_tweet(
+            text=text, in_reply_to_tweet_id=in_reply_to, media_ids=media_ids
+        )
     else:
         return client.create_tweet(text=text, in_reply_to_tweet_id=in_reply_to)
 
 # =========================
-# Reply-Text bauen
+# Reply-Text bauen (normaler Shill)
 # =========================
 def build_reply_text(context_snippet: str = "") -> str:
     prompt = (
@@ -458,11 +462,9 @@ def build_reply_text(context_snippet: str = "") -> str:
 # Main Loop
 # =========================
 def main():
-
-    # *** NEU: Start-Delay verhindert sofortiges Rate-Limit nach Deploy ***
+    # kleiner Delay nach Deploy
     log.info("Warte 30 Sekunden, um Rate-Limit nach Deploy zu vermeiden…")
     time.sleep(30)
-    # *** ENDE NEU ***
 
     # Eigene User-ID herausfinden
     me = client.get_me()
@@ -485,7 +487,7 @@ def main():
                 time.sleep(LOOP_SLEEP_SECONDS)
                 continue
 
-            # Tageswechsel reset
+            # Tageswechsel: Limit zurücksetzen
             today = datetime.now(timezone.utc).date()
             if today != day_marker:
                 day_marker = today
@@ -525,22 +527,35 @@ def main():
 
                     # prüfen, ob jemand nach Price/MC/Stats fragt
                     src_lower = src.lower()
-                    wants_stats = any(k in src_lower for k in [
-                        "price", " mc", "market cap", "marketcap",
-                        "volume", "vol ", "stats", "chart"
-                    ])
+                    wants_stats = any(
+                        k in src_lower
+                        for k in [
+                            "price",
+                            " mc",
+                            "market cap",
+                            "marketcap",
+                            "volume",
+                            "vol ",
+                            "stats",
+                            "chart",
+                        ]
+                    )
 
                     if wants_stats:
                         text = build_market_reply(src)
                     else:
                         text = build_reply_text(src)
 
-                    with_meme = (random.random() < MEME_PROBABILITY)
+                    with_meme = random.random() < MEME_PROBABILITY
                     try:
                         post_reply(text, tid, with_meme)
                         remember_and_maybe_backup(tid)
-                        log.info("Reply (mention) → %s | %s%s",
-                                 tid, text, " [+meme]" if with_meme else "")
+                        log.info(
+                            "Reply (mention) → %s | %s%s",
+                            tid,
+                            text,
+                            " [+meme]" if with_meme else "",
+                        )
                         time.sleep(READ_COOLDOWN_S)
                     except tweepy.TweepyException as e:
                         if "duplicate" in str(e).lower():
@@ -584,14 +599,18 @@ def main():
                             continue
 
                         text = build_reply_text(tw.text or "")
-                        with_meme = (random.random() < MEME_PROBABILITY)
+                        with_meme = random.random() < MEME_PROBABILITY
 
                         try:
                             post_reply(text, tid, with_meme)
                             remember_and_maybe_backup(tid)
                             replies_today[uid] += 1
-                            log.info("Reply → %s | %s%s",
-                                     tid, text, " [+meme]" if with_meme else "")
+                            log.info(
+                                "Reply → %s | %s%s",
+                                tid,
+                                text,
+                                " [+meme]" if with_meme else "",
+                            )
                             time.sleep(READ_COOLDOWN_S)
                         except tweepy.TweepyException as e:
                             # Duplicate content block → als gesehen markieren
@@ -599,7 +618,10 @@ def main():
                                 log.warning("Duplicate content blocked; skipping.")
                                 remember_and_maybe_backup(tid)
                             elif "429" in str(e) or "Too Many Requests" in str(e):
-                                log.warning("Rate limit exceeded. Sleeping for %d seconds.", LOOP_SLEEP_SECONDS)
+                                log.warning(
+                                    "Rate limit exceeded. Sleeping for %d seconds.",
+                                    LOOP_SLEEP_SECONDS,
+                                )
                                 time.sleep(LOOP_SLEEP_SECONDS)
                             else:
                                 log.warning("Reply fehlgeschlagen: %s", e)
@@ -616,3 +638,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
