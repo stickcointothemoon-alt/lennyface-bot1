@@ -51,10 +51,10 @@ GROK_BASE_URL  = os.environ.get("GROK_BASE_URL","https://api.x.ai")
 GROK_MODEL     = os.environ.get("GROK_MODEL","grok-3")
 
 # Grok Tone / Extra Settings (vom Dashboard)
-GROK_TONE             = os.environ.get("GROK_TONE", "normal")              # soft / normal / spicy / savage
-GROK_FORCE_ENGLISH    = os.environ.get("GROK_FORCE_ENGLISH", "1")          # "1" = immer Englisch
+GROK_TONE              = os.environ.get("GROK_TONE", "normal")              # soft / normal / spicy / savage
+GROK_FORCE_ENGLISH     = os.environ.get("GROK_FORCE_ENGLISH", "1")          # "1" = immer Englisch
 GROK_ALWAYS_SHILL_LENNY = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1")   # "1" = immer $LENNY erwähnen
-GROK_EXTRA_PROMPT     = os.environ.get("GROK_EXTRA_PROMPT", "")            # extra Text aus dem Dashboard
+GROK_EXTRA_PROMPT      = os.environ.get("GROK_EXTRA_PROMPT", "")            # extra Text aus dem Dashboard
 
 # Lenny DEX / Token
 LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
@@ -122,8 +122,7 @@ def _set_config_vars(patch: dict):
         pass
 
 _since_backup = 0
-# nicht bei jeder ID Restart triggern → alle 20 neuen IDs sichern
-_BACKUP_EVERY = 20
+_BACKUP_EVERY = 30  # nach 30 neuen IDs sichern
 
 def already_replied(tweet_id: str) -> bool:
     return tweet_id in SEEN
@@ -149,7 +148,7 @@ load_seen_from_env()
 log.info("State loaded: %d replied tweet IDs remembered", len(SEEN))
 
 # =========================
-# Helfer: Grok
+# Helfer: Grok & Text-Bausteine
 # =========================
 def build_grok_system_prompt() -> str:
     """
@@ -162,6 +161,7 @@ def build_grok_system_prompt() -> str:
         "Always keep replies suitable for public social media."
     )
 
+    # Ton einstellen
     tone = (GROK_TONE or "normal").lower()
     if tone == "soft":
         base += " Keep your tone friendly, kind and low aggression. No insults, just playful fun."
@@ -175,20 +175,23 @@ def build_grok_system_prompt() -> str:
     else:  # normal
         base += " Use a balanced degen tone: fun, confident, slightly cheeky."
 
+    # Immer Englisch?
     if GROK_FORCE_ENGLISH == "1":
         base += " Always respond in English, even if the user writes in another language."
 
+    # Immer $LENNY shillen?
     if GROK_ALWAYS_SHILL_LENNY == "1":
         base += " Always mention $LENNY somewhere in the reply, unless it would be completely out of context."
 
+    # Extra Prompt aus dem Dashboard
     extra = (GROK_EXTRA_PROMPT or "").strip()
     if extra:
         base += " Extra style instructions: " + extra
 
+    # Hashtags-Hinweis
     base += " Add 1-2 fitting crypto or meme hashtags when relevant."
 
     return base
-
 
 def grok_generate(prompt: str) -> str:
     if not GROK_API_KEY:
@@ -224,6 +227,80 @@ def fallback_shill():
         "Chads hold $LENNY, paper hands fold. Your move. #Crypto #Lenny",
     ]
     return random.choice(templates)
+
+# --- spezielle Antworten: help / lore / alpha / gm / roast ---
+def build_help_reply() -> str:
+    prompt = (
+        "User asked for 'help'. Write a short English help text (max 260 chars) "
+        "explaining how to use @lennyface_bot. Mention keywords: help, lore, price/mc/stats, "
+        "alpha, gm, roast. Keep it degen but clear."
+    )
+    txt = grok_generate(prompt)
+    if not txt:
+        txt = (
+            "I’m LennyBot ( ͡° ͜ʖ ͡°) — tag me alone. "
+            "Use 'help' for commands, 'lore' for meme history, "
+            "'price/mc/stats' for $LENNY data, 'alpha' for spicy takes, "
+            "'gm' for morning vibes, 'roast' for light banter."
+        )
+    return re.sub(r"\s+", " ", txt).strip()
+
+def build_lore_reply() -> str:
+    prompt = (
+        "User says 'lore'. Explain in max 260 chars who Lennyface ( ͡° ͜ʖ ͡°) is: "
+        "OG 2012 ASCII meme, millions of views on KnowYourMeme, used worldwide for 10+ years, "
+        "still alive today and different from frogs/Wojaks. Degen tone but informative."
+    )
+    txt = grok_generate(prompt)
+    if not txt:
+        txt = (
+            "Lennyface ( ͡° ͜ʖ ͡°) popped up in 2012 forums, pure ASCII chaos with millions "
+            "of views on KnowYourMeme. 10+ years later it’s still used everywhere — no frog, "
+            "no Wojak, just legendary face energy powering $LENNY."
+        )
+    return re.sub(r"\s+", " ", txt).strip()
+
+def build_alpha_reply(context: str) -> str:
+    prompt = (
+        "User mentions 'alpha'. Give one short degen alpha line (max 220 chars) "
+        "about $LENNY and meme meta, not financial advice. Spicy but not toxic."
+        f" Context: {context[:160]}"
+    )
+    txt = grok_generate(prompt)
+    if not txt:
+        txt = (
+            "Real alpha? Most chase new frogs while OG memes like $LENNY quietly load up. "
+            "Not financial advice, just meme math ( ͡° ͜ʖ ͡°) #Lenny #Alpha"
+        )
+    return re.sub(r"\s+", " ", txt).strip()
+
+def build_gm_reply(context: str) -> str:
+    prompt = (
+        "User says gm. Reply with a short degen good-morning line (max 200 chars), "
+        "positive vibe, mention $LENNY, include ( ͡° ͜ʖ ͡°)."
+        f" Context: {context[:160]}"
+    )
+    txt = grok_generate(prompt)
+    if not txt:
+        txt = (
+            "gm degen ☕️ grab your coffee, load some $LENNY and let the memes work "
+            "while you touch grass ( ͡° ͜ʖ ͡°) #gm #Lenny"
+        )
+    return re.sub(r"\s+", " ", txt).strip()
+
+def build_roast_reply(context: str) -> str:
+    prompt = (
+        "User asks for a roast. Write a playful roast (max 220 chars), "
+        "no slurs, no hate speech. Light banter, degen style, mention $LENNY and ( ͡° ͜ʖ ͡°)."
+        f" Context: {context[:160]}"
+    )
+    txt = grok_generate(prompt)
+    if not txt:
+        txt = (
+            "You’re asking a meme bot for a roast instead of buying $LENNY… that’s peak degen, "
+            "ngl ( ͡° ͜ʖ ͡°) go touch grass then come back and stack. #Lenny"
+        )
+    return re.sub(r"\s+", " ", txt).strip()
 
 # =========================
 # Market-Helpers (DEX)
@@ -270,23 +347,20 @@ def fetch_lenny_stats():
             or 0
         )
 
-        stats = {
+        price_str = f"${price:.6f}" if price < 1 else f"${price:.4f}"
+
+        out = {
             "price": price,
             "mc": mc,
             "vol24": vol24,
+            "price_str": price_str,
+            "mc_str": format_number(mc),
+            "vol_str": format_number(vol24),
             "dex_name": pair.get("dexId", ""),
             "pair_url": pair.get("url", ""),
         }
-        # kleines Log, wenn wir im Reply sind
-        log.info("LENNY Stats (Reply): %s", {
-            "price": price,
-            "mc": mc,
-            "vol24": vol24,
-            "price_str": f'${price:.6f}' if price < 1 else f'${price:.4f}',
-            "mc_str": format_number(mc),
-            "vol_str": format_number(vol24),
-        })
-        return stats
+        log.info("LENNY Stats (Reply): %s", out)
+        return out
     except Exception as e:
         log.warning("DEX-Request fehlgeschlagen: %s", e)
         return None
@@ -304,13 +378,9 @@ def build_market_reply(context_snippet: str = "") -> str:
         )
         return txt
 
-    price = stats["price"]
-    mc = stats["mc"]
-    vol = stats["vol24"]
-
-    price_str = f"${price:.6f}" if price < 1 else f"${price:.4f}"
-    mc_str = format_number(mc)
-    vol_str = format_number(vol)
+    price_str = stats["price_str"]
+    mc_str    = stats["mc_str"]
+    vol_str   = stats["vol_str"]
 
     fallback = (
         f"$LENNY stats ( ͡° ͜ʖ ͡°) "
@@ -334,9 +404,11 @@ def build_market_reply(context_snippet: str = "") -> str:
 
     txt = grok_generate(prompt) or fallback
 
+    # sicherstellen, dass das Lennyface drin ist
     if "( ͡° ͜ʖ ͡°)" not in txt:
         txt += " ( ͡° ͜ʖ ͡°)"
 
+    # Bot-Handle entfernen, falls Grok es reinschreibt
     try:
         pattern = re.compile(rf"@{re.escape(BOT_HANDLE)}", re.IGNORECASE)
         txt = pattern.sub("", txt)
@@ -344,109 +416,6 @@ def build_market_reply(context_snippet: str = "") -> str:
         pass
 
     return re.sub(r"\s+", " ", txt).strip()
-
-# =========================
-# Help & Lore
-# =========================
-def build_help_reply() -> str:
-    """
-    Kurz-Help in EN, mit Commands untereinander.
-    """
-    txt = (
-        "Yo anon, I'm LennyBot ( ͡° ͜ʖ ͡°), powered by the OG 2012 Lennyface meme.\n"
-        "\n"
-        "Commands:\n"
-        "- @lennyface_bot help  → show this help.\n"
-        "- @lennyface_bot lore  → Lenny history / meme lore.\n"
-        "- ask 'price', 'mc', 'stats' → live $LENNY price / MC / volume.\n"
-        "- say 'alpha'          → quick degen alpha line.\n"
-        "- say 'gm'             → degen good-morning vibe.\n"
-        "- say 'roast' or 'roast me' → light roast, but still friendly.\n"
-        "\n"
-        "Always tag only me in the tweet for a reply. Sometimes I drop memes too. #Lenny #Solana"
-    )
-    return txt
-def build_alpha_reply(context_snippet: str = "") -> str:
-    """
-    Kurze 'alpha'-Antwort – degen, aber nicht zu lang.
-    """
-    if GROK_API_KEY:
-        prompt = (
-            "User asks for alpha or alpha call about $LENNY or crypto. "
-            "Answer with a very short, spicy but still friendly degen-style alpha line. "
-            "Mention $LENNY and add the Lennyface ( ͡° ͜ʖ ͡°) plus 1-2 hashtags. "
-            f"Context: {context_snippet[:160]}"
-        )
-        txt = grok_generate(prompt)
-        if txt:
-            if "( ͡° ͜ʖ ͡°)" not in txt:
-                txt += " ( ͡° ͜ʖ ͡°)"
-            return re.sub(r"\s+", " ", txt).strip()
-
-    # Fallback ohne Grok
-    return (
-        "Alpha? Simple, anon: stack $LENNY, ignore the noise and let memes work "
-        "their magic ( ͡° ͜ʖ ͡°) #Lenny #CryptoAlpha"
-    )
-
-
-def build_gm_reply(context_snippet: str = "") -> str:
-    """
-    'gm'-Antwort – freundlich, degen, kurz.
-    """
-    if GROK_API_KEY:
-        prompt = (
-            "User greets with 'gm' or good morning. "
-            "Reply with a short, positive degen-style GM message mentioning $LENNY, "
-            "include the Lennyface ( ͡° ͜ʖ ͡°) and 1-2 crypto hashtags. "
-            f"Context: {context_snippet[:160]}"
-        )
-        txt = grok_generate(prompt)
-        if txt:
-            if "( ͡° ͜ʖ ͡°)" not in txt:
-                txt += " ( ͡° ͜ʖ ͡°)"
-            return re.sub(r"\s+", " ", txt).strip()
-
-    return (
-        "gm gm anon, grab your coffee and your $LENNY bags – new day, new memes "
-        "( ͡° ͜ʖ ͡°) #gm #Lenny"
-    )
-
-
-def build_roast_reply(context_snippet: str = "") -> str:
-    """
-    'roast'-Antwort – frech, aber nicht toxisch.
-    """
-    if GROK_API_KEY:
-        prompt = (
-            "User asks to be roasted. "
-            "Write a very short, playful roast in degen style. "
-            "It must NOT be hateful or use slurs. Just light banter. "
-            "Mention $LENNY and include ( ͡° ͜ʖ ͡°) plus 1-2 crypto hashtags. "
-            f"Context: {context_snippet[:160]}"
-        )
-        txt = grok_generate(prompt)
-        if txt:
-            if "( ͡° ͜ʖ ͡°)" not in txt:
-                txt += " ( ͡° ͜ʖ ͡°)"
-            return re.sub(r"\s+", " ", txt).strip()
-
-    return (
-        "You want a roast? Bro, your entry timing is as bad as a top-buy degen, "
-        "but at least you found $LENNY ( ͡° ͜ʖ ͡°) #Roasted #Lenny"
-    )
-
-
-def build_lore_reply() -> str:
-    """
-    Feste Lore-Antwort (nur wenn 'lore' im Text steht).
-    """
-    txt = (
-        "Lennyface ( ͡° ͜ʖ ͡°) is an OG meme from 2012 forums with millions of views on "
-        "KnowYourMeme. Pure ASCII power, used worldwide for 10+ years and never really died. "
-        "$LENNY rides that legendary meme energy, not just another random frog or Wojak. #LennyLore"
-    )
-    return txt
 
 # =========================
 # Helfer: Tweets holen
@@ -530,6 +499,7 @@ def post_reply(text: str, in_reply_to: str, with_meme: bool):
             mid = upload_media_get_id(meme)
             if mid:
                 media_ids = [mid]
+    # create_tweet v2
     if media_ids:
         return client.create_tweet(text=text, in_reply_to_tweet_id=in_reply_to, media_ids=media_ids)
     else:
@@ -548,12 +518,14 @@ def build_reply_text(context_snippet: str = "") -> str:
     if not txt:
         txt = fallback_shill()
 
+    # eigene Handle-Mention aus der Antwort entfernen, damit der Bot sich nicht selbst pingt
     try:
         pattern = re.compile(rf"@{re.escape(BOT_HANDLE)}", re.IGNORECASE)
         txt = pattern.sub("", txt)
     except Exception:
         pass
 
+    # kleine Entdopplung / Aufräumen
     txt = re.sub(r"\s+", " ", txt).strip()
     return txt
 
@@ -562,9 +534,10 @@ def build_reply_text(context_snippet: str = "") -> str:
 # =========================
 def main():
 
-    # Start-Delay nach Deploy, um direktes Rate-Limit zu vermeiden
+    # *** NEU: Start-Delay verhindert sofortiges Rate-Limit nach Deploy ***
     log.info("Warte 30 Sekunden, um Rate-Limit nach Deploy zu vermeiden…")
     time.sleep(30)
+    # *** ENDE NEU ***
 
     # Eigene User-ID herausfinden
     me = client.get_me()
@@ -602,6 +575,7 @@ def main():
                     tid = str(tw.id)
                     last_mention_since = tid
 
+                    # eigene Tweets ignorieren
                     if str(tw.author_id) == my_user_id:
                         continue
 
@@ -609,10 +583,12 @@ def main():
                     if not src:
                         continue
 
+                    # Bot-Handle muss vorkommen
                     handle_token = f"@{BOT_HANDLE.lower()}"
                     if handle_token not in src.lower():
                         continue
 
+                    # nur antworten, wenn NUR der Bot erwähnt wird (einziges @ im Text)
                     if src.count("@") > 1:
                         # Gruppen-Mentions / andere User → ignorieren
                         continue
@@ -622,49 +598,58 @@ def main():
                     if random.random() > REPLY_PROBABILITY:
                         continue
 
-                   src_lower = src.lower()
+                    # ---- Command Routing ----
+                    src_lower = src.lower()
 
-# *** Spezielle Commands: lore, help, alpha, gm, roast ***
-wants_lore  = "lore" in src_lower
-wants_help  = "help" in src_lower
-wants_alpha = "alpha" in src_lower
-wants_gm    = src_lower.startswith("gm") or " gm" in src_lower
-wants_roast = "roast me" in src_lower or " roast" in src_lower
+                    # HELP
+                    if "help" in src_lower:
+                        text = build_help_reply()
 
+                    # LORE – nur wenn Wort "lore" vorkommt
+                    elif re.search(r"\blore\b", src_lower):
+                        text = build_lore_reply()
 
-                    if wants_lore:
-    text = build_lore_reply()
-elif wants_help:
-    text = build_help_reply()
-elif wants_alpha:
-    text = build_alpha_reply(src)
-elif wants_gm:
-    text = build_gm_reply(src)
-elif wants_roast:
-    text = build_roast_reply(src)
-else:
-    # prüfen, ob jemand nach Price/MC/Stats fragt
-    wants_stats = any(k in src_lower for k in [
-        "price", " mc", "market cap", "marketcap",
-        "volume", "vol ", "stats", "chart"
-    ])
-    if wants_stats:
-        text = build_market_reply(src)
-    else:
-        text = build_reply_text(src)
+                    else:
+                        # Stats / Price / MC / Volume / Chart
+                        wants_stats = any(k in src_lower for k in [
+                            "price", " mc", "market cap", "marketcap",
+                            "volume", "vol ", "stats", "chart"
+                        ])
 
+                        # gm
+                        is_gm = src_lower.startswith("gm") or " gm" in src_lower
+
+                        # alpha
+                        wants_alpha = "alpha" in src_lower
+
+                        # roast
+                        wants_roast = "roast" in src_lower or "roast me" in src_lower
+
+                        if wants_stats:
+                            text = build_market_reply(src)
+                        elif is_gm:
+                            text = build_gm_reply(src)
+                        elif wants_alpha:
+                            text = build_alpha_reply(src)
+                        elif wants_roast:
+                            text = build_roast_reply(src)
+                        else:
+                            text = build_reply_text(src)
+                    # ---- Ende Command Routing ----
 
                     with_meme = (random.random() < MEME_PROBABILITY)
                     try:
                         post_reply(text, tid, with_meme)
                         remember_and_maybe_backup(tid)
-                        log.info("Reply (mention) → %s | %s%s",
-                                 tid, text, " [+meme]" if with_meme else "")
+                        log.info(
+                            "Reply (mention) → %s | %s%s",
+                            tid, text, " [+meme]" if with_meme else ""
+                        )
                         time.sleep(READ_COOLDOWN_S)
                     except tweepy.TweepyException as e:
                         if "duplicate" in str(e).lower():
                             log.warning("Duplicate content blocked; skipping.")
-                            remember_and_maybe_backup(tid)
+                            remember_and_maybe_backup(tid)  # trotzdem merken
                         else:
                             log.warning("Reply fehlgeschlagen: %s", e)
                     except Exception as e:
@@ -681,6 +666,7 @@ else:
                 log.info("KOL %s: fetched %d tweets", uid, len(tweets))
 
                 if tweets:
+                    # von alt -> neu
                     for tw in sorted(tweets, key=lambda x: int(x.id)):
                         tid = str(tw.id)
                         last_kol_since[uid] = tid
@@ -696,6 +682,7 @@ else:
                         if replies_today[uid] >= MAX_REPLIES_PER_KOL_PER_DAY:
                             continue
                         if ONLY_ORIGINAL and hasattr(tw, "referenced_tweets") and tw.referenced_tweets:
+                            # Sicherheitshalber, falls exclude nicht greift
                             continue
                         if random.random() > REPLY_PROBABILITY:
                             continue
@@ -707,10 +694,13 @@ else:
                             post_reply(text, tid, with_meme)
                             remember_and_maybe_backup(tid)
                             replies_today[uid] += 1
-                            log.info("Reply → %s | %s%s",
-                                     tid, text, " [+meme]" if with_meme else "")
+                            log.info(
+                                "Reply → %s | %s%s",
+                                tid, text, " [+meme]" if with_meme else ""
+                            )
                             time.sleep(READ_COOLDOWN_S)
                         except tweepy.TweepyException as e:
+                            # Duplicate content block → als gesehen markieren
                             if "duplicate" in str(e).lower():
                                 log.warning("Duplicate content blocked; skipping.")
                                 remember_and_maybe_backup(tid)
@@ -727,6 +717,7 @@ else:
         except Exception as e:
             log.error("Loop error: %s", e)
             traceback.print_exc()
+            # Crash vermeiden, kurze Pause
             time.sleep(10)
 
 if __name__ == "__main__":
