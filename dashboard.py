@@ -16,17 +16,16 @@ HEROKU_API_KEY  = os.environ.get("HEROKU_API_KEY")
 LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
 DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 
-# BOT Handle (nur für Anzeige im Help-Block)
-BOT_HANDLE = os.environ.get("BOT_HANDLE", "lennyface_bot").lstrip("@")
-
-# Grok Settings (werden nur für Preview genutzt)
-GROK_API_KEY            = os.environ.get("GROK_API_KEY", "")
-GROK_BASE_URL           = os.environ.get("GROK_BASE_URL", "https://api.x.ai")
-GROK_MODEL              = os.environ.get("GROK_MODEL", "grok-3")
-GROK_TONE               = os.environ.get("GROK_TONE", "normal")
-GROK_FORCE_ENGLISH      = os.environ.get("GROK_FORCE_ENGLISH", "1")
+# Grok Settings (für Preview & Defaults)
+GROK_API_KEY          = os.environ.get("GROK_API_KEY", "")
+GROK_BASE_URL         = os.environ.get("GROK_BASE_URL", "https://api.x.ai")
+GROK_MODEL            = os.environ.get("GROK_MODEL", "grok-3")
+GROK_TONE             = os.environ.get("GROK_TONE", "normal")
+GROK_FORCE_ENGLISH    = os.environ.get("GROK_FORCE_ENGLISH", "1")
 GROK_ALWAYS_SHILL_LENNY = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1")
-GROK_EXTRA_PROMPT       = os.environ.get("GROK_EXTRA_PROMPT", "")
+GROK_EXTRA_PROMPT     = os.environ.get("GROK_EXTRA_PROMPT", "")
+
+BOT_HANDLE            = os.environ.get("BOT_HANDLE", "lennyface_bot").lstrip("@")
 
 
 # -----------------------------
@@ -70,6 +69,15 @@ def parse_ids(csv_value: str):
     if not csv_value:
         return []
     return [x.strip() for x in csv_value.split(",") if x.strip()]
+
+
+def parse_float(value: str, default: float) -> float:
+    try:
+        if value is None:
+            return default
+        return float(str(value).strip())
+    except Exception:
+        return default
 
 
 # -----------------------------
@@ -257,12 +265,26 @@ def render_dashboard(preview_text: str | None = None):
     target_count = len(targets)
 
     bot_paused = cfg.get("BOT_PAUSED", "0")  # "0" oder "1"
+
+    # Grok
     grok_tone = cfg.get("GROK_TONE", GROK_TONE)
     grok_force_en = cfg.get("GROK_FORCE_ENGLISH", GROK_FORCE_ENGLISH)
     grok_always_lenny = cfg.get("GROK_ALWAYS_SHILL_LENNY", GROK_ALWAYS_SHILL_LENNY)
     grok_extra = cfg.get("GROK_EXTRA_PROMPT", GROK_EXTRA_PROMPT)
 
+    # Memes / State Script
     fetch_url = cfg.get("FETCH_MEMES_URL", "")
+
+    # Command Toggles
+    enable_help  = cfg.get("ENABLE_HELP", "1")
+    enable_lore  = cfg.get("ENABLE_LORE", "1")
+    enable_stats = cfg.get("ENABLE_STATS", "1")
+    enable_alpha = cfg.get("ENABLE_ALPHA", "1")
+    enable_gm    = cfg.get("ENABLE_GM", "1")
+    enable_roast = cfg.get("ENABLE_ROAST", "1")
+
+    meme_prob   = parse_float(cfg.get("MEME_PROBABILITY", "0.3"), 0.3)
+    reply_prob  = parse_float(cfg.get("REPLY_PROBABILITY", "1.0"), 1.0)
 
     lenny_stats = fetch_lenny_stats_for_dashboard()
     global_stats = fetch_global_stats()
@@ -274,32 +296,59 @@ def render_dashboard(preview_text: str | None = None):
   <meta charset="utf-8">
   <title>Lenny Bot Dashboard v3</title>
   <style>
+    :root {
+      --bg-main: #020617;
+      --bg-card: rgba(15,23,42,0.98);
+      --border-card: #1f2937;
+      --accent: #facc15;
+      --accent-soft: #38bdf8;
+      --text-main: #e5e7eb;
+      --text-muted: #9ca3af;
+      --shadow-soft: 0 20px 50px rgba(0,0,0,0.7);
+    }
+    * {
+      box-sizing: border-box;
+    }
     body {
-      background: radial-gradient(circle at top, #1e293b 0, #020617 55%);
-      color: #f9fafb;
-      font-family: Arial, sans-serif;
       margin: 0;
       padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text-main);
+      background:
+        radial-gradient(circle at 10% 0, #0f172a 0, #020617 40%),
+        radial-gradient(circle at 90% 100%, #1d283a 0, #020617 45%);
+      min-height: 100vh;
     }
     .wrap {
       max-width: 1200px;
-      margin: 20px auto;
-      padding: 0 10px 40px;
+      margin: 20px auto 40px;
+      padding: 0 12px;
     }
     h1, h2, h3 {
-      color: #ffe66d;
+      color: var(--accent);
+      margin-top: 0;
     }
     .card {
-      border: 1px solid #1f2937;
-      border-radius: 12px;
-      padding: 15px 20px;
-      margin-bottom: 16px;
-      background: rgba(15,23,42,0.95);
-      box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+      border-radius: 16px;
+      padding: 18px 20px;
+      margin-bottom: 18px;
+      background: radial-gradient(circle at top left, rgba(56,189,248,0.10), rgba(15,23,42,0.98));
+      border: 1px solid var(--border-card);
+      box-shadow: var(--shadow-soft);
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: 18px;
+      border: 1px solid rgba(148,163,184,0.08);
+      pointer-events: none;
     }
     .row {
       display: flex;
-      gap: 16px;
+      gap: 18px;
       flex-wrap: wrap;
     }
     .col {
@@ -311,84 +360,242 @@ def render_dashboard(preview_text: str | None = None):
       margin-top: 8px;
       font-size: 0.9rem;
     }
-    input[type="text"], textarea, select {
+    input[type="text"],
+    input[type="number"],
+    textarea,
+    select {
       width: 100%;
-      padding: 6px 8px;
-      border-radius: 6px;
+      padding: 7px 9px;
+      border-radius: 999px;
       border: 1px solid #374151;
       background: #020617;
-      color: #f9fafb;
-      box-sizing: border-box;
+      color: var(--text-main);
+      font-size: 0.9rem;
+      margin-top: 4px;
     }
     textarea {
-      min-height: 70px;
+      border-radius: 10px;
+      min-height: 80px;
       font-family: monospace;
       font-size: 0.85rem;
     }
     .btn {
-      display: inline-block;
-      margin-top: 10px;
-      padding: 8px 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 12px;
+      padding: 7px 16px;
       border-radius: 999px;
       border: none;
       cursor: pointer;
-      font-weight: bold;
+      font-weight: 600;
       font-size: 0.9rem;
+      text-decoration: none;
+      transition: transform 0.08s ease-out, box-shadow 0.08s ease-out, opacity 0.08s ease-out;
     }
-    .btn-green { background: #22c55e; color: #000; }
-    .btn-orange { background: #f97316; color: #000; }
-    .btn-red { background: #ef4444; color: #fff; }
-    .btn-blue { background: #3b82f6; color: #fff; }
-    small { color: #9ca3af; }
+    .btn span.icon {
+      font-size: 1.05rem;
+    }
+    .btn-green { background: linear-gradient(135deg, #22c55e, #bbf7d0); color: #052e16; }
+    .btn-orange { background: linear-gradient(135deg, #f97316, #fed7aa); color: #431407; }
+    .btn-red { background: linear-gradient(135deg, #ef4444, #fecaca); color: #450a0a; }
+    .btn-blue { background: linear-gradient(135deg, #3b82f6, #bfdbfe); color: #172554; }
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 30px rgba(15,23,42,0.8);
+      opacity: 0.96;
+    }
+    small { color: var(--text-muted); }
     pre {
       background: #020617;
       padding: 10px;
-      border-radius: 6px;
+      border-radius: 10px;
       overflow-x: auto;
       font-size: 0.8rem;
+      border: 1px solid #111827;
     }
     .stat-line {
       margin: 3px 0;
       font-size: 0.9rem;
     }
     .pill {
-      display: inline-block;
-      padding: 4px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 12px;
       border-radius: 999px;
-      font-size: 0.75rem;
-      background: #111827;
-      margin-right: 4px;
+      font-size: 0.78rem;
+      background: rgba(15,23,42,0.9);
+      border: 1px solid #1f2937;
+      margin: 2px 4px 2px 0;
+    }
+    .pill-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #22c55e;
+    }
+    .pill-dot-red {
+      background: #ef4444;
     }
     a {
       color: #60a5fa;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
     }
     .badge-pos { color: #22c55e; font-weight: bold; }
     .badge-neg { color: #ef4444; font-weight: bold; }
     .headline {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 12px;
+      margin-bottom: 18px;
+    }
+    .headline-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
     }
     .headline-face {
-      font-size: 1.4rem;
+      font-size: 1.8rem;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 30% 0, #facc15 0, #4b5563 40%, #020617 80%);
+      box-shadow: 0 12px 35px rgba(0,0,0,0.8);
+      border: 1px solid rgba(250,204,21,0.6);
+    }
+    .headline-sub {
+      color: var(--text-muted);
+      font-size: 0.86rem;
+    }
+    .chip {
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      background: rgba(15,23,42,0.9);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .chip-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #22c55e;
+      box-shadow: 0 0 6px #22c55e;
+    }
+    .chip-dot-paused {
+      background: #f97316;
+      box-shadow: 0 0 6px #f97316;
+    }
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .slider-row input[type="number"] {
+      max-width: 80px;
+      border-radius: 8px;
+    }
+    .slider-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .toggle-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      margin-top: 10px;
+    }
+    .toggle-row label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+      font-size: 0.83rem;
+    }
+    .toggle-row input[type="checkbox"] {
+      accent-color: #22c55e;
+    }
+    .section-title {
+      font-size: 0.95rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #9ca3af;
+      margin-bottom: 8px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: rgba(15,23,42,0.8);
+      border: 1px solid #1f2937;
+    }
+    .badge span.dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #22c55e;
+    }
+    .badge span.dot.red {
+      background: #ef4444;
+    }
+    .cmd-list pre {
+      white-space: pre;
+      line-height: 1.4;
+    }
+    @media (max-width: 768px) {
+      .headline {
+        flex-direction: column;
+        align-items: flex-start;
+      }
     }
   </style>
 </head>
 <body>
 <div class="wrap">
   <div class="headline">
-    <div class="headline-face">( ͡° ͜ʖ ͡°)</div>
-    <h1>Lenny Bot Dashboard v3</h1>
+    <div class="headline-left">
+      <div class="headline-face">( ͡° ͜ʖ ͡°)</div>
+      <div>
+        <h1>Lenny Bot Dashboard v3</h1>
+        <div class="headline-sub">
+          OG ASCII meme control center for <strong>@{{ bot_handle }}</strong>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="chip">
+        <span class="chip-dot {% if bot_paused=='1' %}chip-dot-paused{% endif %}"></span>
+        <span>
+          Bot:
+          <strong>{% if bot_paused=='1' %}Paused{% else %}Running{% endif %}</strong>
+        </span>
+      </div>
+    </div>
   </div>
 
   <!-- BOT STATUS + GLOBAL -->
   <div class="row">
     <div class="card col">
-      <h2>Bot Status</h2>
+      <div class="section-title">Runtime Status</div>
+      <h2>Bot State</h2>
       <div class="stat-line">
-        <span class="pill">Seen IDs: {{ seen_count }}</span>
-        <span class="pill">Targets: {{ target_count }}</span>
-        <span class="pill">BOT_PAUSED: {{ 'YES' if bot_paused=='1' else 'NO' }}</span>
+        <span class="pill"><span class="pill-dot"></span>Seen IDs: {{ seen_count }}</span>
+        <span class="pill"><span class="pill-dot"></span>Targets: {{ target_count }}</span>
+        <span class="pill">
+          <span class="pill-dot {% if bot_paused=='1' %}pill-dot-red{% endif %}"></span>
+          BOT_PAUSED: {{ 'YES' if bot_paused=='1' else 'NO' }}
+        </span>
       </div>
       <form method="post" action="{{ url_for('update_bot_control_v3') }}?key={{ key }}">
         <input type="hidden" name="key" value="{{ key }}">
@@ -397,13 +604,16 @@ def render_dashboard(preview_text: str | None = None):
           <option value="0" {% if bot_paused=='0' %}selected{% endif %}>Running</option>
           <option value="1" {% if bot_paused=='1' %}selected{% endif %}>Paused</option>
         </select>
-        <button class="btn btn-green" type="submit">Save Bot State</button>
+        <button class="btn btn-green" type="submit">
+          <span class="icon">⚙️</span><span>Save Bot State</span>
+        </button>
         <small>BOT_PAUSED = 1 → Worker schläft, 0 → aktiv.</small>
       </form>
     </div>
 
     <div class="card col">
-      <h2>Global Market (BTC / SOL)</h2>
+      <div class="section-title">Macro Market</div>
+      <h2>BTC / SOL Snapshot</h2>
       {% if global_stats %}
         <p class="stat-line">
           <strong>BTC:</strong>
@@ -420,6 +630,7 @@ def render_dashboard(preview_text: str | None = None):
 
   <!-- LENNY STATS + DAILY POST -->
   <div class="card">
+    <div class="section-title">$LENNY Market</div>
     <h2>$LENNY Market Stats</h2>
     {% if lenny_stats %}
       <p class="stat-line">
@@ -440,7 +651,9 @@ def render_dashboard(preview_text: str | None = None):
 
     <form method="post" action="{{ url_for('trigger_daily_post_v3') }}?key={{ key }}">
       <input type="hidden" name="key" value="{{ key }}">
-      <button class="btn btn-orange" type="submit">🚀 Daily Post jetzt senden</button>
+      <button class="btn btn-orange" type="submit">
+        <span class="icon">🚀</span><span>Send Daily Post now</span>
+      </button>
     </form>
     <small>Startet einen One-off Dyno mit <code>python daily_post_now.py</code>.</small>
   </div>
@@ -449,13 +662,16 @@ def render_dashboard(preview_text: str | None = None):
   <div class="row">
     <!-- TARGETS -->
     <div class="card col">
-      <h2>Targets (KOLs)</h2>
+      <div class="section-title">Targets / KOLs</div>
+      <h2>Reply Targets</h2>
       <form method="post" action="{{ url_for('update_targets_v3') }}?key={{ key }}">
         <input type="hidden" name="key" value="{{ key }}">
         <label>Aktuelle TARGET_IDS (eine pro Zeile):</label>
         <textarea name="targets_text">{% for t in targets %}{{ t }}
 {% endfor %}</textarea>
-        <button class="btn btn-blue" type="submit">Save TARGET_IDS</button>
+        <button class="btn btn-blue" type="submit">
+          <span class="icon">🎯</span><span>Save TARGET_IDS</span>
+        </button>
         <small>Wird als Komma-Liste in TARGET_IDS gespeichert.</small>
       </form>
 
@@ -465,19 +681,22 @@ def render_dashboard(preview_text: str | None = None):
         <input type="hidden" name="key" value="{{ key }}">
         <label>X Handle (z.B. @Loomdart):</label>
         <input type="text" name="handle" placeholder="@username">
-        <button class="btn btn-orange" type="submit">Convert</button>
+        <button class="btn btn-orange" type="submit">
+          <span class="icon">🔎</span><span>Convert</span>
+        </button>
       </form>
       {% if request.args.get('conv_handle') %}
-        <p>
+        <p style="margin-top:8px;">
           <strong>Handle:</strong> {{ request.args.get('conv_handle') }}<br>
           <strong>User-ID:</strong> {{ request.args.get('conv_id') }}
         </p>
       {% endif %}
     </div>
 
-    <!-- GROK -->
+    <!-- GROK & COMMAND SETTINGS -->
     <div class="card col">
-      <h2>Grok / Tone Settings</h2>
+      <div class="section-title">Brain & Commands</div>
+      <h2>Grok & Command Settings</h2>
       <form method="post" action="{{ url_for('update_grok_v3') }}?key={{ key }}">
         <input type="hidden" name="key" value="{{ key }}">
 
@@ -502,35 +721,73 @@ def render_dashboard(preview_text: str | None = None):
         <label>Extra Prompt (wird an Grok angehängt):</label>
         <textarea name="grok_extra" placeholder="Extra Anweisungen für Grok…">{{ grok_extra }}</textarea>
 
-        <button class="btn btn-green" type="submit">Save Grok Settings</button>
+        <button class="btn btn-green" type="submit">
+          <span class="icon">🧠</span><span>Save Grok Settings</span>
+        </button>
       </form>
-      <small>Der Bot liest diese Variablen beim Start ein und passt seine Antworten an.</small>
+
+      <hr>
+
+      <form method="post" action="{{ url_for('update_commands_v3') }}?key={{ key }}">
+        <input type="hidden" name="key" value="{{ key }}">
+        <h3>Command Toggles</h3>
+        <div class="toggle-row">
+          <label><input type="checkbox" name="enable_help" value="1" {% if enable_help=='1' %}checked{% endif %}>help</label>
+          <label><input type="checkbox" name="enable_lore" value="1" {% if enable_lore=='1' %}checked{% endif %}>lore</label>
+          <label><input type="checkbox" name="enable_stats" value="1" {% if enable_stats=='1' %}checked{% endif %}>price/mc/stats</label>
+          <label><input type="checkbox" name="enable_alpha" value="1" {% if enable_alpha=='1' %}checked{% endif %}>alpha</label>
+          <label><input type="checkbox" name="enable_gm" value="1" {% if enable_gm=='1' %}checked{% endif %}>gm</label>
+          <label><input type="checkbox" name="enable_roast" value="1" {% if enable_roast=='1' %}checked{% endif %}>roast</label>
+        </div>
+
+        <div class="slider-row">
+          <div>
+            <div class="slider-label">MEME_PROBABILITY (0.0 – 0.5)</div>
+            <input type="number" step="0.05" min="0.0" max="0.5" name="meme_probability" value="{{ '%.2f' % meme_prob }}">
+          </div>
+          <div>
+            <div class="slider-label">REPLY_PROBABILITY (0.0 – 1.0)</div>
+            <input type="number" step="0.05" min="0.0" max="1.0" name="reply_probability" value="{{ '%.2f' % reply_prob }}">
+          </div>
+        </div>
+
+        <button class="btn btn-blue" type="submit">
+          <span class="icon">🎚</span><span>Save Command Settings</span>
+        </button>
+        <small>Bot muss Commands noch aus diesen ENV lesen – aktuell safe, nur Konfig.</small>
+      </form>
     </div>
   </div>
 
   <!-- MEMES & STATE -->
   <div class="row">
     <div class="card col">
-      <h2>Memes</h2>
+      <div class="section-title">Memes</div>
+      <h2>Meme Fetch</h2>
       <p class="stat-line">
         <strong>FETCH_MEMES_URL:</strong><br>
         <code>{{ fetch_url or 'nicht gesetzt' }}</code>
       </p>
       <form method="post" action="{{ url_for('trigger_fetch_memes_v3') }}?key={{ key }}">
         <input type="hidden" name="key" value="{{ key }}">
-        <button class="btn btn-orange" type="submit">Fetch Memes Now</button>
+        <button class="btn btn-orange" type="submit">
+          <span class="icon">🖼</span><span>Fetch Memes Now</span>
+        </button>
       </form>
       <small>Ruft intern <code>python fetch_memes.py</code> als One-off Dyno auf.</small>
     </div>
 
     <div class="card col">
-      <h2>State / Seen IDs</h2>
+      <div class="section-title">State / Seen IDs</div>
+      <h2>Seen ID Cache</h2>
       <p class="stat-line">
         <strong>STATE_SEEN_IDS:</strong> {{ seen_count }} IDs
       </p>
       <form method="post" action="{{ url_for('trigger_seed_backup_v3') }}?key={{ key }}">
         <input type="hidden" name="key" value="{{ key }}">
-        <button class="btn btn-blue" type="submit">Seed + Backup ENV (safe)</button>
+        <button class="btn btn-blue" type="submit">
+          <span class="icon">💾</span><span>Seed + Backup ENV (safe)</span>
+        </button>
       </form>
       <small>
         Führt <code>seed_and_backup_env.py</code> aus:<br>
@@ -542,12 +799,15 @@ def render_dashboard(preview_text: str | None = None):
 
   <!-- REPLY SIMULATOR -->
   <div class="card">
+    <div class="section-title">Brain Preview</div>
     <h2>Reply Simulator (Grok Preview)</h2>
     <form method="post" action="{{ url_for('simulate_reply_v3') }}?key={{ key }}">
       <input type="hidden" name="key" value="{{ key }}">
       <label>Beispiel-Tweet eingeben:</label>
-      <textarea name="sample_text" placeholder="@lennyface_bot what do you think about this pump?"></textarea>
-      <button class="btn btn-green" type="submit">Simulate Reply</button>
+      <textarea name="sample_text" placeholder="@{{ bot_handle }} what do you think about this pump?"></textarea>
+      <button class="btn btn-green" type="submit">
+        <span class="icon">🤖</span><span>Simulate Reply</span>
+      </button>
     </form>
     {% if preview_text %}
       <h3>Preview:</h3>
@@ -556,8 +816,9 @@ def render_dashboard(preview_text: str | None = None):
     <small>Nutze das, um zu testen, wie Lenny in deinem aktuellen Tone/Prompt antwortet – ohne X-API Limit.</small>
   </div>
 
-  <!-- HELP / COMMANDS -->
-  <div class="card">
+  <!-- COMMAND DOCS -->
+  <div class="card cmd-list">
+    <div class="section-title">Usage</div>
     <h2>Bot Commands / Usage</h2>
     <p class="stat-line">
       How to interact with <strong>@{{ bot_handle }}</strong>:
@@ -570,7 +831,7 @@ def render_dashboard(preview_text: str | None = None):
   → Lenny ( ͡° ͜ʖ ͡°) meme history / big facts.
 
 Contains: price / mc / stats / volume / chart
-  → Live $LENNY price, MC & 24h Volume.
+  → Live $LENNY market cap reply + Dex link.
 
 Contains: alpha
   → Degen alpha line.
@@ -613,6 +874,14 @@ Contains: roast / "roast me"
         lenny_stats=lenny_stats,
         global_stats=global_stats,
         preview_text=preview_text,
+        enable_help=enable_help,
+        enable_lore=enable_lore,
+        enable_stats=enable_stats,
+        enable_alpha=enable_alpha,
+        enable_gm=enable_gm,
+        enable_roast=enable_roast,
+        meme_prob=meme_prob,
+        reply_prob=reply_prob,
         bot_handle=BOT_HANDLE,
     )
 
@@ -673,6 +942,51 @@ def update_grok_v3():
         "GROK_FORCE_ENGLISH": force_en,
         "GROK_ALWAYS_SHILL_LENNY": always_lenny,
         "GROK_EXTRA_PROMPT": extra,
+    })
+
+    key = request.args.get("key", "")
+    return redirect(url_for("index_v3", key=key))
+
+
+# -----------------------------
+# COMMAND SETTINGS (toggles + probs)
+# -----------------------------
+@app.route("/update_commands_v3", methods=["POST"])
+def update_commands_v3():
+    require_key()
+
+    def chk(name: str, default: str = "1") -> str:
+        return "1" if request.form.get(name) == "1" else "0"
+
+    enable_help  = chk("enable_help")
+    enable_lore  = chk("enable_lore")
+    enable_stats = chk("enable_stats")
+    enable_alpha = chk("enable_alpha")
+    enable_gm    = chk("enable_gm")
+    enable_roast = chk("enable_roast")
+
+    meme_prob = request.form.get("meme_probability", "0.3")
+    reply_prob = request.form.get("reply_probability", "1.0")
+
+    # etwas clampen, damit kein Blödsinn drinsteht
+    try:
+        mp = max(0.0, min(0.5, float(meme_prob)))
+    except Exception:
+        mp = 0.3
+    try:
+        rp = max(0.0, min(1.0, float(reply_prob)))
+    except Exception:
+        rp = 1.0
+
+    heroku_set_config({
+        "ENABLE_HELP": enable_help,
+        "ENABLE_LORE": enable_lore,
+        "ENABLE_STATS": enable_stats,
+        "ENABLE_ALPHA": enable_alpha,
+        "ENABLE_GM": enable_gm,
+        "ENABLE_ROAST": enable_roast,
+        "MEME_PROBABILITY": f"{mp:.2f}",
+        "REPLY_PROBABILITY": f"{rp:.2f}",
     })
 
     key = request.args.get("key", "")
