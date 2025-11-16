@@ -364,10 +364,12 @@ def fetch_lenny_stats():
     except Exception as e:
         log.warning("DEX-Request fehlgeschlagen: %s", e)
         return None
+
 def build_market_reply(context_snippet: str = "") -> str:
     """
     Antwortet mit Preis/MC/Vol + Lenny-Spruch.
-    Nutzt Grok wenn möglich, sonst Fallback.
+    Nutzt Grok wenn möglich.
+    Wir fügen den Dex-Link IMMER selbst hinzu, Grok darf KEINE URLs bauen.
     """
     stats = fetch_lenny_stats()
     if not stats:
@@ -385,48 +387,63 @@ def build_market_reply(context_snippet: str = "") -> str:
     mc_str = format_number(mc)
     vol_str = format_number(vol)
     pair_url = stats.get("pair_url") or ""
-    dex_name = stats.get("dex_name") or "Dexscreener"
 
-    # Fallback-Text inkl. Dex-Link
+    # Fallback OHNE URL
     fallback = (
         f"$LENNY stats ( ͡° ͜ʖ ͡°) "
-        f"Price: {price_str} | MC: {mc_str} | 24h Vol: {vol_str}. "
+        f"Price: {price_str} | MC: {mc_str} | 24h Vol: {vol_str} "
+        "#Lenny #Solana #Memecoins"
     )
-    if pair_url:
-        fallback += f"Chart: {pair_url} "
-    fallback += "#Lenny #Solana #Memecoins"
 
     if not GROK_API_KEY:
-        log.info("LENNY Stats (Reply): %s", {
-            "price": price, "mc": mc, "vol24": vol,
-            "price_str": price_str, "mc_str": mc_str, "vol_str": vol_str,
-        })
-        return fallback
+        base_txt = fallback
+    else:
+        ctx = (
+            f"User message: {context_snippet[:140]}. "
+            f"Numbers: Price {price_str}, Market Cap {mc_str}, 24h Volume {vol_str}."
+        )
+        prompt = (
+            "User asks about the price/market cap/volume of $LENNY. "
+            "Write a very short, cheeky answer in degen style. "
+            "DO NOT include any links or URLs. "
+            "Include the Lennyface ( ͡° ͜ʖ ͡°) and 1-2 crypto hashtags. "
+            "Use exactly the numbers I give you. "
+            f"Context: {ctx}"
+        )
+        base_txt = grok_generate(prompt) or fallback
 
-    ctx = (
-        f"User message: {context_snippet[:140]}. "
-        f"Numbers: Price {price_str}, Market Cap {mc_str}, 24h Volume {vol_str}. "
-        f"Dex URL: {pair_url or 'none'}."
-    )
-    prompt = (
-        "User asks about the price/market cap/volume or chart of $LENNY. "
-        "Write a very short, cheeky answer in degen style, include the Lennyface ( ͡° ͜ʖ ͡°) "
-        "and 1-2 crypto hashtags. Use the numbers and Dex URL I give you. "
-        f"Context: {ctx}"
-    )
+    # sicherstellen, dass das Lennyface drin ist
+    if "( ͡° ͜ʖ ͡°)" not in base_txt:
+        base_txt += " ( ͡° ͜ʖ ͡°)"
 
-    txt = grok_generate(prompt) or fallback
+    # Falls Grok doch irgendeine URL reinschreibt → rauswerfen
+    base_txt = re.sub(r"https?://\S+", "", base_txt).strip()
 
-    if "( ͡° ͜ʖ ͡°)" not in txt:
-        txt += " ( ͡° ͜ʖ ͡°)"
-
+    # Bot-Handle entfernen, falls Grok es reinschreibt
     try:
         pattern = re.compile(rf"@{re.escape(BOT_HANDLE)}", re.IGNORECASE)
-        txt = pattern.sub("", txt)
+        base_txt = pattern.sub("", base_txt)
     except Exception:
         pass
 
-    return re.sub(r"\s+", " ", txt).strip()
+    base_txt = re.sub(r"\s+", " ", base_txt).strip()
+
+    # Jetzt unseren echten Dex-Link anhängen, wenn vorhanden
+    if pair_url:
+        max_len = 280
+        url_part = pair_url.strip()
+        # Platz reservieren: Leerzeichen + URL
+        reserved = len(url_part) + 1
+        # Basis kürzen, falls zu lang
+        if len(base_txt) + 1 + len(url_part) > max_len:
+            base_txt = base_txt[: max_len - reserved].rstrip(" .,!-")
+
+        final_txt = f"{base_txt} {url_part}"
+    else:
+        # keine URL bekannt → einfach auf 280 chars kürzen
+        final_txt = base_txt[:280]
+
+    return final_txt
 
 # =========================
 # Helfer: Tweets holen
