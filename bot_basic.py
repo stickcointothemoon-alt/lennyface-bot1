@@ -791,39 +791,40 @@ def main():
                     if random.random() > REPLY_PROBABILITY:
                         continue
 
-                    # --- Command-Erkennung ---
+                   # --- Command-Erkennung ---
                     src_lower = src.lower()
 
                     # 1) HELP
-                    if "help" in src_lower:
+                    if "help" in src_lower and ENABLE_HELP:
                         text = build_help_reply()
 
                     # 2) LORE
-                    elif "lore" in src_lower:
+                    elif "lore" in src_lower and ENABLE_LORE:
                         text = build_lore_reply()
 
                     # 3) PRICE / MC / STATS / VOLUME / CHART
                     elif any(k in src_lower for k in [
                         "price", " mc", "market cap", "marketcap",
                         "volume", "vol ", "stats", "chart"
-                    ]):
+                    ]) and ENABLE_STATS:
                         text = build_market_reply(src)
 
                     # 4) ALPHA
-                    elif "alpha" in src_lower:
+                    elif "alpha" in src_lower and ENABLE_ALPHA:
                         text = build_alpha_reply(src)
 
                     # 5) GM
-                    elif src_lower.startswith("gm") or " gm" in src_lower:
+                    elif (src_lower.startswith("gm") or " gm" in src_lower) and ENABLE_GM:
                         text = build_gm_reply(src)
 
                     # 6) ROAST
-                    elif "roast me" in src_lower or " roast" in src_lower:
+                    elif ("roast me" in src_lower or " roast" in src_lower) and ENABLE_ROAST:
                         text = build_roast_reply(src)
 
                     # 7) Default-Shill
                     else:
                         text = build_reply_text(src)
+
 
                     with_meme = (random.random() < MEME_PROBABILITY)
                     try:
