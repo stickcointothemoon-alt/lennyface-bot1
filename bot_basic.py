@@ -149,6 +149,75 @@ def _set_config_vars(patch: dict):
 _since_backup = 0
 _BACKUP_EVERY = 30  # nach 30 neuen IDs sichern
 
+# =========================
+# STATS für Dashboard
+# =========================
+# Diese Werte werden regelmäßig in Heroku-Config geschrieben,
+# damit das Dashboard "Daily Activity" anzeigen kann.
+STATS_DATE = os.environ.get("STATS_DATE", "")
+try:
+    STATS_REPLIES_TOTAL = int(os.environ.get("STATS_REPLIES_TOTAL", "0") or "0")
+    STATS_REPLIES_MENTIONS = int(os.environ.get("STATS_REPLIES_MENTIONS", "0") or "0")
+    STATS_REPLIES_KOL = int(os.environ.get("STATS_REPLIES_KOL", "0") or "0")
+    STATS_MEMES_USED = int(os.environ.get("STATS_MEMES_USED", "0") or "0")
+except ValueError:
+    STATS_REPLIES_TOTAL = 0
+    STATS_REPLIES_MENTIONS = 0
+    STATS_REPLIES_KOL = 0
+    STATS_MEMES_USED = 0
+
+_STATS_SINCE_FLUSH = 0
+_STATS_FLUSH_EVERY = 10  # alle 10 Replies Stats in Config Vars schreiben
+
+
+def _flush_stats_to_env():
+    """Schreibt die aktuellen Stats-Werte in Heroku Config Vars."""
+    if not (HEROKU_API_KEY and HEROKU_APP_NAME):
+        return
+    patch = {
+        "STATS_DATE": STATS_DATE,
+        "STATS_REPLIES_TOTAL": str(STATS_REPLIES_TOTAL),
+        "STATS_REPLIES_MENTIONS": str(STATS_REPLIES_MENTIONS),
+        "STATS_REPLIES_KOL": str(STATS_REPLIES_KOL),
+        "STATS_MEMES_USED": str(STATS_MEMES_USED),
+    }
+    _set_config_vars(patch)
+
+
+def bump_stats(kind: str, used_meme: bool):
+    """
+    kind: "mention" oder "kol"
+    used_meme: True/False, ob ein Meme angehängt war
+    """
+    global STATS_DATE, STATS_REPLIES_TOTAL, STATS_REPLIES_MENTIONS
+    global STATS_REPLIES_KOL, STATS_MEMES_USED
+    global _STATS_SINCE_FLUSH
+
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    # Tageswechsel → neue Stats
+    if STATS_DATE != today:
+        STATS_DATE = today
+        STATS_REPLIES_TOTAL = 0
+        STATS_REPLIES_MENTIONS = 0
+        STATS_REPLIES_KOL = 0
+        STATS_MEMES_USED = 0
+
+    STATS_REPLIES_TOTAL += 1
+    if kind == "mention":
+        STATS_REPLIES_MENTIONS += 1
+    elif kind == "kol":
+        STATS_REPLIES_KOL += 1
+
+    if used_meme:
+        STATS_MEMES_USED += 1
+
+    _STATS_SINCE_FLUSH += 1
+    if _STATS_SINCE_FLUSH >= _STATS_FLUSH_EVERY:
+        _STATS_SINCE_FLUSH = 0
+        _flush_stats_to_env()
+
+
 def already_replied(tweet_id: str) -> bool:
     return tweet_id in SEEN
 
