@@ -16,22 +16,17 @@ HEROKU_API_KEY  = os.environ.get("HEROKU_API_KEY")
 LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
 DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 
-# Grok Settings (werden nur für Preview genutzt)
-GROK_API_KEY            = os.environ.get("GROK_API_KEY", "")
-GROK_BASE_URL           = os.environ.get("GROK_BASE_URL", "https://api.x.ai")
-GROK_MODEL              = os.environ.get("GROK_MODEL", "grok-3")
-GROK_TONE               = os.environ.get("GROK_TONE", "normal")
-GROK_FORCE_ENGLISH      = os.environ.get("GROK_FORCE_ENGLISH", "1")
+# Grok Settings (nur für Preview genutzt)
+GROK_API_KEY          = os.environ.get("GROK_API_KEY", "")
+GROK_BASE_URL         = os.environ.get("GROK_BASE_URL", "https://api.x.ai")
+GROK_MODEL            = os.environ.get("GROK_MODEL", "grok-3")
+GROK_TONE             = os.environ.get("GROK_TONE", "normal")
+GROK_FORCE_ENGLISH    = os.environ.get("GROK_FORCE_ENGLISH", "1")
 GROK_ALWAYS_SHILL_LENNY = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1")
-GROK_EXTRA_PROMPT       = os.environ.get("GROK_EXTRA_PROMPT", "")
+GROK_EXTRA_PROMPT     = os.environ.get("GROK_EXTRA_PROMPT", "")
 
-# Bot Handle für Help-Section
+# Bot Handle (für Help-Box)
 BOT_HANDLE = os.environ.get("BOT_HANDLE", "lennyface_bot").lstrip("@")
-
-# Boost Defaults (für Anzeige / Fallback)
-BOOST_ENABLED_DEFAULT  = os.environ.get("BOOST_ENABLED", "1")
-BOOST_DURATION_DEFAULT = os.environ.get("BOOST_DURATION_S", "600")  # 10 Minuten
-BOOST_COOLDOWN_DEFAULT = os.environ.get("BOOST_COOLDOWN_S", "3")    # 3 Sekunden
 
 
 # -----------------------------
@@ -252,7 +247,7 @@ def render_dashboard(preview_text: str | None = None):
     cfg = heroku_get_config()
     key = request.args.get("key", "")
 
-    # Status / State
+    # State / Targets
     state_seen_csv = cfg.get("STATE_SEEN_IDS", "")
     seen_ids = parse_ids(state_seen_csv)
     seen_count = len(seen_ids)
@@ -262,18 +257,32 @@ def render_dashboard(preview_text: str | None = None):
     target_count = len(targets)
 
     bot_paused = cfg.get("BOT_PAUSED", "0")  # "0" oder "1"
+
+    # Grok Settings aus Config (falls via Dashboard geändert)
     grok_tone = cfg.get("GROK_TONE", GROK_TONE)
     grok_force_en = cfg.get("GROK_FORCE_ENGLISH", GROK_FORCE_ENGLISH)
     grok_always_lenny = cfg.get("GROK_ALWAYS_SHILL_LENNY", GROK_ALWAYS_SHILL_LENNY)
     grok_extra = cfg.get("GROK_EXTRA_PROMPT", GROK_EXTRA_PROMPT)
 
+    # Meme Fetch URL
     fetch_url = cfg.get("FETCH_MEMES_URL", "")
 
-    # Boost Settings aus Config
-    boost_enabled  = cfg.get("BOOST_ENABLED", BOOST_ENABLED_DEFAULT)
-    boost_duration = cfg.get("BOOST_DURATION_S", BOOST_DURATION_DEFAULT)
-    boost_cooldown = cfg.get("BOOST_COOLDOWN_S", BOOST_COOLDOWN_DEFAULT)
+    # Cooldowns / Boost aus Config
+    read_cooldown = cfg.get("READ_COOLDOWN_S", os.environ.get("READ_COOLDOWN_S", "6"))
+    loop_sleep = cfg.get("LOOP_SLEEP_SECONDS", os.environ.get("LOOP_SLEEP_SECONDS", "240"))
 
+    boost_enabled   = cfg.get("BOOST_ENABLED", os.environ.get("BOOST_ENABLED", "1"))
+    boost_cooldown  = cfg.get("BOOST_COOLDOWN_S", os.environ.get("BOOST_COOLDOWN_S", "3"))
+    boost_duration  = cfg.get("BOOST_DURATION_S", os.environ.get("BOOST_DURATION_S", "600"))
+
+    # Stats aus Config (vom Bot geschrieben)
+    stats_date   = cfg.get("STATS_DATE", "")
+    stats_total  = cfg.get("STATS_REPLIES_TOTAL", "0")
+    stats_mens   = cfg.get("STATS_REPLIES_MENTIONS", "0")
+    stats_kol    = cfg.get("STATS_REPLIES_KOL", "0")
+    stats_memes  = cfg.get("STATS_MEMES_USED", "0")
+
+    # Market Daten
     lenny_stats = fetch_lenny_stats_for_dashboard()
     global_stats = fetch_global_stats()
 
@@ -382,6 +391,22 @@ def render_dashboard(preview_text: str | None = None):
     .headline-face {
       font-size: 1.4rem;
     }
+    .subgrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit,minmax(160px,1fr));
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .subpill-title {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #9ca3af;
+    }
+    .subpill-value {
+      font-size: 0.95rem;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
@@ -400,6 +425,16 @@ def render_dashboard(preview_text: str | None = None):
         <span class="pill">Targets: {{ target_count }}</span>
         <span class="pill">BOT_PAUSED: {{ 'YES' if bot_paused=='1' else 'NO' }}</span>
       </div>
+      <div class="subgrid">
+        <div>
+          <div class="subpill-title">Normal cooldown</div>
+          <div class="subpill-value">{{ read_cooldown }} s</div>
+        </div>
+        <div>
+          <div class="subpill-title">Loop sleep</div>
+          <div class="subpill-value">{{ loop_sleep }} s</div>
+        </div>
+      </div>
       <form method="post" action="{{ url_for('update_bot_control_v3') }}?key={{ key }}">
         <input type="hidden" name="key" value="{{ key }}">
         <label>Bot Control:</label>
@@ -410,36 +445,6 @@ def render_dashboard(preview_text: str | None = None):
         <button class="btn btn-green" type="submit">Save Bot State</button>
         <small>BOT_PAUSED = 1 → Worker schläft, 0 → aktiv.</small>
       </form>
-
-      <hr>
-      <h3>Boost Mode</h3>
-      <div class="stat-line">
-        <span class="pill">Boost: {{ 'ON' if boost_enabled=='1' else 'OFF' }}</span>
-        <span class="pill">Cooldown: {{ boost_cooldown }}s</span>
-        <span class="pill">Duration: {{ boost_duration }}s</span>
-      </div>
-
-      <form method="post" action="{{ url_for('update_boost_v3') }}?key={{ key }}">
-        <input type="hidden" name="key" value="{{ key }}">
-
-        <label>Boost Active:</label>
-        <select name="boost_enabled">
-          <option value="0" {% if boost_enabled!='1' %}selected{% endif %}>Off</option>
-          <option value="1" {% if boost_enabled=='1' %}selected{% endif %}>On (auto)</option>
-        </select>
-
-        <label>Reply cooldown in Boost (seconds):</label>
-        <input type="text" name="boost_cooldown" value="{{ boost_cooldown }}">
-
-        <label>Boost window (seconds):</label>
-        <input type="text" name="boost_duration" value="{{ boost_duration }}">
-
-        <button class="btn btn-orange" type="submit">Save Boost Settings</button>
-      </form>
-      <small>
-        Boost = schnellere Replies für ein kurzes Zeitfenster.<br>
-        Nicht zu niedrig stellen, sonst X-Rate-Limit.
-      </small>
     </div>
 
     <div class="card col">
@@ -548,7 +553,7 @@ def render_dashboard(preview_text: str | None = None):
     </div>
   </div>
 
-  <!-- MEMES & STATE -->
+  <!-- MEMES & STATE + BOOST + STATS -->
   <div class="row">
     <div class="card col">
       <h2>Memes</h2>
@@ -576,6 +581,73 @@ def render_dashboard(preview_text: str | None = None):
         Führt <code>seed_and_backup_env.py</code> aus:<br>
         • holt neue Seen-IDs per API<br>
         • schreibt sie sicher in <code>STATE_SEEN_IDS</code>.
+      </small>
+    </div>
+  </div>
+
+  <div class="row">
+    <!-- BOOST -->
+    <div class="card col">
+      <h2>Boost Mode</h2>
+      <p class="stat-line">
+        <span class="pill">Boost: {{ 'ON' if boost_enabled=='1' else 'OFF' }}</span>
+        <span class="pill">Boost cooldown: {{ boost_cooldown }}s</span>
+        <span class="pill">Normal: {{ read_cooldown }}s</span>
+      </p>
+      <p class="stat-line">
+        Wenn Boost aktiv ist, antwortet der Bot enger getaktet (kürzerer Cooldown)
+        für {{ boost_duration }} Sekunden, sobald viele Mentions reinfliegen.
+      </p>
+      <form method="post" action="{{ url_for('update_boost_v3') }}?key={{ key }}">
+        <input type="hidden" name="key" value="{{ key }}">
+
+        <label>Boost Enabled:</label>
+        <select name="boost_enabled">
+          <option value="1" {% if boost_enabled=='1' %}selected{% endif %}>ON</option>
+          <option value="0" {% if boost_enabled=='0' %}selected{% endif %}>OFF</option>
+        </select>
+
+        <label>Boost Cooldown (Sekunden):</label>
+        <input type="text" name="boost_cooldown" value="{{ boost_cooldown }}">
+
+        <label>Boost Dauer (Sekunden):</label>
+        <input type="text" name="boost_duration" value="{{ boost_duration }}">
+
+        <button class="btn btn-green" type="submit">Save Boost Settings</button>
+      </form>
+      <small>
+        Empfehlung: normaler Cooldown z.B. 6s, Boost 3s für 600s.<br>
+        Der Bot entscheidet intern, wann auto-Boost getriggert wird (Mentions-Spike).
+      </small>
+    </div>
+
+    <!-- DAILY STATS -->
+    <div class="card col">
+      <h2>Daily Activity / Stats</h2>
+      <p class="stat-line">
+        <strong>Date (UTC):</strong> {{ stats_date or 'n/a' }}
+      </p>
+      <div class="subgrid">
+        <div>
+          <div class="subpill-title">Replies total</div>
+          <div class="subpill-value">{{ stats_total }}</div>
+        </div>
+        <div>
+          <div class="subpill-title">Mentions replied</div>
+          <div class="subpill-value">{{ stats_mens }}</div>
+        </div>
+        <div>
+          <div class="subpill-title">KOL replies</div>
+          <div class="subpill-value">{{ stats_kol }}</div>
+        </div>
+        <div>
+          <div class="subpill-title">Memes used</div>
+          <div class="subpill-value">{{ stats_memes }}</div>
+        </div>
+      </div>
+      <small>
+        Diese Werte werden vom Bot über Config Vars geschrieben.<br>
+        Wenn alles auf 0 steht, wurde heute noch nichts getrackt oder der Bot läuft erst seit kurzem.
       </small>
     </div>
   </div>
@@ -609,7 +681,7 @@ def render_dashboard(preview_text: str | None = None):
   → Lenny ( ͡° ͜ʖ ͡°) meme history / big facts.
 
 Contains: price / mc / stats / volume / chart
-  → Live $LENNY price, MC & 24h Volume.
+  → Live $LENNY market cap (and link to DEX).
 
 Contains: alpha
   → Degen alpha line.
@@ -652,10 +724,17 @@ Contains: roast / "roast me"
         lenny_stats=lenny_stats,
         global_stats=global_stats,
         preview_text=preview_text,
-        boost_enabled=boost_enabled,
-        boost_duration=boost_duration,
-        boost_cooldown=boost_cooldown,
         BOT_HANDLE=BOT_HANDLE,
+        read_cooldown=read_cooldown,
+        loop_sleep=loop_sleep,
+        boost_enabled=boost_enabled,
+        boost_cooldown=boost_cooldown,
+        boost_duration=boost_duration,
+        stats_date=stats_date,
+        stats_total=stats_total,
+        stats_mens=stats_mens,
+        stats_kol=stats_kol,
+        stats_memes=stats_memes,
     )
 
 
@@ -676,35 +755,6 @@ def update_bot_control_v3():
     paused = "1" if paused == "1" else "0"
     heroku_set_config({"BOT_PAUSED": paused})
     key = request.args.get("key", "")
-    return redirect(url_for("index_v3", key=key))
-
-
-# -----------------------------
-# BOOST SETTINGS
-# -----------------------------
-@app.route("/update_boost_v3", methods=["POST"])
-def update_boost_v3():
-    require_key()
-
-    key = request.args.get("key", "")
-
-    # Boost an/aus
-    boost_enabled = "1" if request.form.get("boost_enabled") == "1" else "0"
-
-    # Cooldown & Duration aus dem Form (nur Ziffern zulassen)
-    raw_cd = (request.form.get("boost_cooldown", "") or "").strip()
-    raw_du = (request.form.get("boost_duration", "") or "").strip()
-
-    cd = "".join(ch for ch in raw_cd if ch.isdigit()) or BOOST_COOLDOWN_DEFAULT
-    du = "".join(ch for ch in raw_du if ch.isdigit()) or BOOST_DURATION_DEFAULT
-
-    changes = {
-        "BOOST_ENABLED": boost_enabled,
-        "BOOST_COOLDOWN_S": cd,
-        "BOOST_DURATION_S": du,
-    }
-    heroku_set_config(changes)
-
     return redirect(url_for("index_v3", key=key))
 
 
@@ -744,6 +794,32 @@ def update_grok_v3():
         "GROK_FORCE_ENGLISH": force_en,
         "GROK_ALWAYS_SHILL_LENNY": always_lenny,
         "GROK_EXTRA_PROMPT": extra,
+    })
+
+    key = request.args.get("key", "")
+    return redirect(url_for("index_v3", key=key))
+
+
+# -----------------------------
+# BOOST SETTINGS
+# -----------------------------
+@app.route("/update_boost_v3", methods=["POST"])
+def update_boost_v3():
+    require_key()
+    enabled = "1" if request.form.get("boost_enabled") == "1" else "0"
+    cooldown = (request.form.get("boost_cooldown", "") or "").strip() or "3"
+    duration = (request.form.get("boost_duration", "") or "").strip() or "600"
+
+    # Nur Zahlen basic filtern
+    if not cooldown.isdigit():
+        cooldown = "3"
+    if not duration.isdigit():
+        duration = "600"
+
+    heroku_set_config({
+        "BOOST_ENABLED": enabled,
+        "BOOST_COOLDOWN_S": cooldown,
+        "BOOST_DURATION_S": duration,
     })
 
     key = request.args.get("key", "")
