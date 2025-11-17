@@ -895,7 +895,7 @@ def main():
                         text = build_reply_text(src)
 
 
-                    with_meme = (random.random() < MEME_PROBABILITY)
+with_meme = (random.random() < MEME_PROBABILITY)
 try:
     post_reply(text, tid, with_meme)
     remember_and_maybe_backup(tid)
@@ -953,33 +953,32 @@ except Exception as e:
                         text = build_reply_text(tw.text or "")
                         with_meme = (random.random() < MEME_PROBABILITY)
 
-                        try:
-                        post_reply(text, tid, with_meme)
-                        remember_and_maybe_backup(tid)
+try:
+    post_reply(text, tid, with_meme)
+    remember_and_maybe_backup(tid)
 
-                      # NEW: Stats für Dashboard
-                        bump_stats(kind="kol", used_meme=with_meme)
+    # NEW: Stats fürs Dashboard (KOL-Replies)
+    bump_stats(kind="kol", used_meme=with_meme)
 
-                        replies_today[uid] += 1
-                        log.info(
-                        "Reply → %s | %s%s",
-                        tid, text, " [+meme]" if with_meme else ""
-                        )
-                        time.sleep(READ_COOLDOWN_S)
+    replies_today[uid] += 1
+    log.info(
+        "Reply → %s | %s%s",
+        tid, text, " [+meme]" if with_meme else ""
+    )
+    time.sleep(READ_COOLDOWN_S)
+except tweepy.TweepyException as e:
+    # Duplicate content block → als gesehen markieren
+    if "duplicate" in str(e).lower():
+        log.warning("Duplicate content blocked; skipping.")
+        remember_and_maybe_backup(tid)
+    elif "429" in str(e) or "Too Many Requests" in str(e):
+        log.warning("Rate limit exceeded. Sleeping for %d seconds.", LOOP_SLEEP_SECONDS)
+        time.sleep(LOOP_SLEEP_SECONDS)
+    else:
+        log.warning("Reply fehlgeschlagen: %s", e)
+except Exception as e:
+    log.warning("Reply fehlgeschlagen: %s", e)
 
-                        
-                        except tweepy.TweepyException as e:
-                            # Duplicate content block → als gesehen markieren
-                            if "duplicate" in str(e).lower():
-                                log.warning("Duplicate content blocked; skipping.")
-                                remember_and_maybe_backup(tid)
-                            elif "429" in str(e) or "Too Many Requests" in str(e):
-                                log.warning("Rate limit exceeded. Sleeping for %d seconds.", LOOP_SLEEP_SECONDS)
-                                time.sleep(LOOP_SLEEP_SECONDS)
-                            else:
-                                log.warning("Reply fehlgeschlagen: %s", e)
-                        except Exception as e:
-                            log.warning("Reply fehlgeschlagen: %s", e)
 
             time.sleep(LOOP_SLEEP_SECONDS)
 
