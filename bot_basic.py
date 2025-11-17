@@ -45,16 +45,29 @@ ONLY_ORIGINAL         = os.environ.get("ONLY_ORIGINAL", "1") == "1"
 # Meme-Frequenz
 MEME_PROBABILITY      = float(os.environ.get("MEME_PROBABILITY", "0.3"))
 
+# Boost-Mode Settings
+BOOST_ENABLED           = os.environ.get("BOOST_ENABLED", "1") == "1"
+BOOST_DURATION_S        = int(os.environ.get("BOOST_DURATION_S", "600"))   # 10 min
+BOOST_MENTION_WINDOW_S  = int(os.environ.get("BOOST_MENTION_WINDOW_S", "120"))  # 2 min
+BOOST_MIN_MENTIONS      = int(os.environ.get("BOOST_MIN_MENTIONS", "4"))   # ab 4 Mentions in Zeitfenster
+BOOST_REPLY_PROB        = float(os.environ.get("BOOST_REPLY_PROB", "0.9")) # in Boost fast immer antworten
+BOOST_MEME_PROB         = float(os.environ.get("BOOST_MEME_PROB", "0.7"))  # mehr Memes im Boost
+BOOST_READ_COOLDOWN_S   = int(os.environ.get("BOOST_READ_COOLDOWN_S", "2"))  # schnellerer Cooldown
+
+# manueller Boost über Config Var (z.B. Dashboard später)
+BOOST_MANUAL_FLAG       = os.environ.get("BOOST_MANUAL", "0") == "1"
+
+
 # Grok
 GROK_API_KEY   = os.environ.get("GROK_API_KEY","")
 GROK_BASE_URL  = os.environ.get("GROK_BASE_URL","https://api.x.ai")
 GROK_MODEL     = os.environ.get("GROK_MODEL","grok-3")
 
 # Grok Tone / Extra Settings (vom Dashboard)
-GROK_TONE              = os.environ.get("GROK_TONE", "normal")              # soft / normal / spicy / savage
-GROK_FORCE_ENGLISH     = os.environ.get("GROK_FORCE_ENGLISH", "1")          # "1" = immer Englisch
-GROK_ALWAYS_SHILL_LENNY = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1")   # "1" = immer $LENNY erwähnen
-GROK_EXTRA_PROMPT      = os.environ.get("GROK_EXTRA_PROMPT", "")            # extra Text aus dem Dashboard
+GROK_TONE               = os.environ.get("GROK_TONE", "normal")              # soft / normal / spicy / savage
+GROK_FORCE_ENGLISH      = os.environ.get("GROK_FORCE_ENGLISH", "1")          # "1" = immer Englisch
+GROK_ALWAYS_SHILL_LENNY = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1")     # "1" = immer $LENNY erwähnen
+GROK_EXTRA_PROMPT       = os.environ.get("GROK_EXTRA_PROMPT", "")            # extra Text aus dem Dashboard
 
 # Lenny DEX / Token
 LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
@@ -144,8 +157,66 @@ def save_seen_now():
     _set_config_vars({"STATE_SEEN_IDS": csv})
     log.info("State backup (manual): %d IDs gespeichert.", len(SEEN))
 
+# =========================
+# Usage Stats (für Dashboard)
+# =========================
+USAGE_STATS_ENV_KEY = "LENNY_USAGE_STATS"
+
+STATS = {
+    "total_replies": 0,
+    "help": 0,
+    "lore": 0,
+    "market": 0,
+    "alpha": 0,
+    "gm": 0,
+    "roast": 0,
+    "generic": 0,
+    "kol_replies": 0,
+}
+
+_stats_since_flush = 0
+_STATS_FLUSH_EVERY = 25  # nach X Replies in ENV schreiben
+
+
+def load_stats_from_env():
+    raw = os.environ.get(USAGE_STATS_ENV_KEY, "").strip()
+    if not raw:
+        return
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, (int, float)):
+                    STATS[k] = int(v)
+        log.info("Usage stats loaded: %s", STATS)
+    except Exception:
+        log.warning("Could not parse LENNY_USAGE_STATS, starting fresh.")
+
+
+def inc_stat(key: str):
+    global _stats_since_flush
+    STATS[key] = STATS.get(key, 0) + 1
+    _stats_since_flush += 1
+
+
+def flush_stats_if_needed(force: bool = False):
+    global _stats_since_flush
+    if not (HEROKU_API_KEY and HEROKU_APP_NAME):
+        return
+    if not force and _stats_since_flush < _STATS_FLUSH_EVERY:
+        return
+    try:
+        _set_config_vars({USAGE_STATS_ENV_KEY: json.dumps(STATS)})
+        log.info("Usage stats backup: %s", STATS)
+        _stats_since_flush = 0
+    except Exception:
+        pass
+
 load_seen_from_env()
 log.info("State loaded: %d replied tweet IDs remembered", len(SEEN))
+
+load_stats_from_env()
+
 
 # =========================
 # Helfer: Grok & Text-Bausteine
@@ -227,80 +298,6 @@ def fallback_shill():
         "Chads hold $LENNY, paper hands fold. Your move. #Crypto #Lenny",
     ]
     return random.choice(templates)
-
-# --- spezielle Antworten: help / lore / alpha / gm / roast ---
-def build_help_reply() -> str:
-    prompt = (
-        "User asked for 'help'. Write a short English help text (max 260 chars) "
-        "explaining how to use @lennyface_bot. Mention keywords: help, lore, price/mc/stats, "
-        "alpha, gm, roast. Keep it degen but clear."
-    )
-    txt = grok_generate(prompt)
-    if not txt:
-        txt = (
-            "I’m LennyBot ( ͡° ͜ʖ ͡°) — tag me alone. "
-            "Use 'help' for commands, 'lore' for meme history, "
-            "'price/mc/stats' for $LENNY data, 'alpha' for spicy takes, "
-            "'gm' for morning vibes, 'roast' for light banter."
-        )
-    return re.sub(r"\s+", " ", txt).strip()
-
-def build_lore_reply() -> str:
-    prompt = (
-        "User says 'lore'. Explain in max 260 chars who Lennyface ( ͡° ͜ʖ ͡°) is: "
-        "OG 2012 ASCII meme, millions of views on KnowYourMeme, used worldwide for 10+ years, "
-        "still alive today and different from frogs/Wojaks. Degen tone but informative."
-    )
-    txt = grok_generate(prompt)
-    if not txt:
-        txt = (
-            "Lennyface ( ͡° ͜ʖ ͡°) popped up in 2012 forums, pure ASCII chaos with millions "
-            "of views on KnowYourMeme. 10+ years later it’s still used everywhere — no frog, "
-            "no Wojak, just legendary face energy powering $LENNY."
-        )
-    return re.sub(r"\s+", " ", txt).strip()
-
-def build_alpha_reply(context: str) -> str:
-    prompt = (
-        "User mentions 'alpha'. Give one short degen alpha line (max 220 chars) "
-        "about $LENNY and meme meta, not financial advice. Spicy but not toxic."
-        f" Context: {context[:160]}"
-    )
-    txt = grok_generate(prompt)
-    if not txt:
-        txt = (
-            "Real alpha? Most chase new frogs while OG memes like $LENNY quietly load up. "
-            "Not financial advice, just meme math ( ͡° ͜ʖ ͡°) #Lenny #Alpha"
-        )
-    return re.sub(r"\s+", " ", txt).strip()
-
-def build_gm_reply(context: str) -> str:
-    prompt = (
-        "User says gm. Reply with a short degen good-morning line (max 200 chars), "
-        "positive vibe, mention $LENNY, include ( ͡° ͜ʖ ͡°)."
-        f" Context: {context[:160]}"
-    )
-    txt = grok_generate(prompt)
-    if not txt:
-        txt = (
-            "gm degen ☕️ grab your coffee, load some $LENNY and let the memes work "
-            "while you touch grass ( ͡° ͜ʖ ͡°) #gm #Lenny"
-        )
-    return re.sub(r"\s+", " ", txt).strip()
-
-def build_roast_reply(context: str) -> str:
-    prompt = (
-        "User asks for a roast. Write a playful roast (max 220 chars), "
-        "no slurs, no hate speech. Light banter, degen style, mention $LENNY and ( ͡° ͜ʖ ͡°)."
-        f" Context: {context[:160]}"
-    )
-    txt = grok_generate(prompt)
-    if not txt:
-        txt = (
-            "You’re asking a meme bot for a roast instead of buying $LENNY… that’s peak degen, "
-            "ngl ( ͡° ͜ʖ ͡°) go touch grass then come back and stack. #Lenny"
-        )
-    return re.sub(r"\s+", " ", txt).strip()
 
 # =========================
 # Market-Helpers (DEX)
@@ -425,7 +422,7 @@ def build_market_reply(context_snippet: str = "") -> str:
     if pair_url:
         max_len = 280
         url_part = pair_url.strip()
-        reserved = len(url_part) + 1
+        reserved = len(url_part) + 1  # Leerzeichen + URL
 
         if len(base_txt) + reserved > max_len:
             base_txt = base_txt[: max_len - reserved].rstrip(" .,!-")
@@ -554,6 +551,7 @@ def build_reply_text(context_snippet: str = "") -> str:
 
 def build_help_reply() -> str:
     """Kurzer Help-Text für die Community (Englisch)."""
+    # bewusst ohne Grok, damit stabil & kurz
     return (
         "I’m LennyBot ( ͡° ͜ʖ ͡°) — tag me alone to use commands:\n"
         "help  → show this menu\n"
@@ -563,7 +561,6 @@ def build_help_reply() -> str:
         "gm    → good-morning reply\n"
         "roast → light roast, no slurs"
     )
-
 
 def build_lore_reply() -> str:
     """
@@ -577,7 +574,6 @@ def build_lore_reply() -> str:
         "come and go, Lenny is pure ASCII energy — simple, universal and hard to kill. "
         "$LENNY rides that evergreen meme power, not a random clone. #LennyLore"
     )
-
 
 def build_alpha_reply(context_snippet: str = "") -> str:
     """Kurze Alpha-Line, optional mit Grok, sonst Fallback."""
@@ -596,7 +592,6 @@ def build_alpha_reply(context_snippet: str = "") -> str:
         "No guarantees, but I know which side of history I’d pick ( ͡° ͜ʖ ͡°) #LennyAlpha"
     )
 
-
 def build_gm_reply(context_snippet: str = "") -> str:
     """GM-Antwort, leicht degen."""
     if GROK_API_KEY:
@@ -610,7 +605,6 @@ def build_gm_reply(context_snippet: str = "") -> str:
             return re.sub(r"\s+", " ", txt).strip()
 
     return "GM degen, stack $LENNY, sip coffee, ignore jeets ( ͡° ͜ʖ ͡°) #GM #Lenny"
-
 
 def build_roast_reply(context_snippet: str = "") -> str:
     """
@@ -633,101 +627,13 @@ def build_roast_reply(context_snippet: str = "") -> str:
         "I’ve seen more conviction in paper straws than in your entries. At least $LENNY is holding strong ( ͡° ͜ʖ ͡°)",
     ]
     return random.choice(templates)
-
-
-# =========================
-# Command Replies (help, lore, alpha, gm, roast)
-# =========================
-
-def build_help_reply() -> str:
-    """Kurzer Help-Text für die Community (Englisch)."""
-    return (
-        "I’m LennyBot ( ͡° ͜ʖ ͡°) — tag me alone to use commands:\n"
-        "help  → show this menu\n"
-        "lore  → Lenny meme history\n"
-        "price / mc / stats / volume / chart → live $LENNY data\n"
-        "alpha → spicy degen alpha line\n"
-        "gm    → good-morning reply\n"
-        "roast → light roast, no slurs"
-    )
-
-
-def build_lore_reply() -> str:
-    """
-    Lenny Lore in kurz, mit starken Fakten.
-    Keine exakten View-Zahlen erfinden, nur belegbare Aussagen.
-    """
-    return (
-        "Lennyface ( ͡° ͜ʖ ͡°) was born on a Finnish imageboard in 2012 and got "
-        "picked up by 4chan, Reddit and gaming chats worldwide. It’s an OG Unicode meme "
-        "documented on KnowYourMeme and still used after 10+ years. While frogs and Wojaks "
-        "come and go, Lenny is pure ASCII energy — simple, universal and hard to kill. "
-        "$LENNY rides that evergreen meme power, not a random clone. #LennyLore"
-    )
-
-
-def build_alpha_reply(context_snippet: str = "") -> str:
-    """Kurze Alpha-Line, optional mit Grok, sonst Fallback."""
-    base = (
-        "Drop one short degen alpha line about $LENNY. Be confident but not promising profits. "
-        "Max 200 chars."
-    )
-    if GROK_API_KEY:
-        prompt = base + f" Context tweet: {context_snippet[:180]}"
-        txt = grok_generate(prompt)
-        if txt:
-            return re.sub(r"\s+", " ", txt).strip()
-
-    return (
-        "Alpha? Simple: early on $LENNY, strong meme, real degen culture. "
-        "No guarantees, but I know which side of history I’d pick ( ͡° ͜ʖ ͡°) #LennyAlpha"
-    )
-
-
-def build_gm_reply(context_snippet: str = "") -> str:
-    """GM-Antwort, leicht degen."""
-    if GROK_API_KEY:
-        prompt = (
-            "Write a short GM reply in degen style for $LENNY. "
-            "Max 160 chars, include ( ͡° ͜ʖ ͡°) and 1-2 crypto hashtags. "
-            f"Original tweet: {context_snippet[:180]}"
-        )
-        txt = grok_generate(prompt)
-        if txt:
-            return re.sub(r"\s+", " ", txt).strip()
-
-    return "GM degen, stack $LENNY, sip coffee, ignore jeets ( ͡° ͜ʖ ͡°) #GM #Lenny"
-
-
-def build_roast_reply(context_snippet: str = "") -> str:
-    """
-    Leichter Roast – kein Hate, keine Slurs.
-    Nur spielerisches Necken.
-    """
-    if GROK_API_KEY:
-        prompt = (
-            "User asked to be roasted. Write a short, playful roast in degen style, "
-            "but no slurs, hate speech or real-life threats. Include $LENNY and ( ͡° ͜ʖ ͡°). "
-            "Max 200 chars. Tweet: " + context_snippet[:180]
-        )
-        txt = grok_generate(prompt)
-        if txt:
-            return re.sub(r"\s+", " ", txt).strip()
-
-    templates = [
-        "You call that a portfolio? Even my memecoins laugh at you. Touch some $LENNY and try again ( ͡° ͜ʖ ͡°)",
-        "Bro, your bags look like you bought every top since 2021. Time to upgrade your taste with $LENNY ( ͡° ͜ʖ ͡°)",
-        "I’ve seen more conviction in paper straws than in your entries. At least $LENNY is holding strong ( ͡° ͜ʖ ͡°)",
-    ]
-    return random.choice(templates)
-
 
 # =========================
 # Main Loop
 # =========================
 def main():
 
-    # *** NEU: Start-Delay verhindert sofortiges Rate-Limit nach Deploy ***
+    # *** Start-Delay verhindert sofortiges Rate-Limit nach Deploy ***
     log.info("Warte 30 Sekunden, um Rate-Limit nach Deploy zu vermeiden…")
     time.sleep(30)
     # *** ENDE NEU ***
@@ -744,9 +650,32 @@ def main():
 
     last_mention_since = None
     last_kol_since = {uid: None for uid in TARGET_IDS}
+    
+    # Boost-Mode State
+    boost_until_ts = 0.0
+    recent_mentions_ts = []  # Liste von Zeitstempeln (Sekunden) für eingehende Mentions
+
 
     while True:
         try:
+             now_ts = time.time()
+
+            # prüfen, ob Auto-Boost noch läuft
+            auto_boost_active = BOOST_ENABLED and (now_ts < boost_until_ts)
+            # manueller Boost über ENV (z.B. Dashboard)
+            manual_boost_active = BOOST_ENABLED and BOOST_MANUAL_FLAG
+
+            boost_active = auto_boost_active or manual_boost_active
+
+            if boost_active:
+                current_cooldown   = BOOST_READ_COOLDOWN_S
+                current_reply_prob = BOOST_REPLY_PROB
+                current_meme_prob  = BOOST_MEME_PROB
+            else:
+                current_cooldown   = READ_COOLDOWN_S
+                current_reply_prob = REPLY_PROBABILITY
+                current_meme_prob  = MEME_PROBABILITY
+
             # Bot pausieren über ENV
             if os.environ.get("BOT_PAUSED", "0") == "1":
                 log.info("BOT_PAUSED=1 → Bot pausiert, schlafe nur.")
@@ -759,7 +688,7 @@ def main():
                 day_marker = today
                 replies_today = {uid: 0 for uid in TARGET_IDS}
 
-                     # 1) Mentions beantworten (Bot wird angepingt)
+            # 1) Mentions beantworten (Bot wird angepingt)
             ments = fetch_mentions(my_user_id, since_id=last_mention_since)
             if ments:
                 log.info("Mentions fetched: %d", len(ments))
@@ -788,45 +717,52 @@ def main():
 
                     if already_replied(tid):
                         continue
-                    if random.random() > REPLY_PROBABILITY:
+                    if random.random() > current_reply_prob:
                         continue
 
-                   # --- Command-Erkennung ---
+                                        # --- Command-Erkennung ---
                     src_lower = src.lower()
 
                     # 1) HELP
-                    if "help" in src_lower and ENABLE_HELP:
+                    if "help" in src_lower:
                         text = build_help_reply()
+                        inc_stat("help")
 
                     # 2) LORE
-                    elif "lore" in src_lower and ENABLE_LORE:
+                    elif "lore" in src_lower:
                         text = build_lore_reply()
+                        inc_stat("lore")
 
                     # 3) PRICE / MC / STATS / VOLUME / CHART
                     elif any(k in src_lower for k in [
                         "price", " mc", "market cap", "marketcap",
                         "volume", "vol ", "stats", "chart"
-                    ]) and ENABLE_STATS:
+                    ]):
                         text = build_market_reply(src)
+                        inc_stat("market")
 
                     # 4) ALPHA
-                    elif "alpha" in src_lower and ENABLE_ALPHA:
+                    elif "alpha" in src_lower:
                         text = build_alpha_reply(src)
+                        inc_stat("alpha")
 
                     # 5) GM
-                    elif (src_lower.startswith("gm") or " gm" in src_lower) and ENABLE_GM:
+                    elif src_lower.startswith("gm") or " gm" in src_lower:
                         text = build_gm_reply(src)
+                        inc_stat("gm")
 
                     # 6) ROAST
-                    elif ("roast me" in src_lower or " roast" in src_lower) and ENABLE_ROAST:
+                    elif "roast me" in src_lower or " roast" in src_lower:
                         text = build_roast_reply(src)
+                        inc_stat("roast")
 
                     # 7) Default-Shill
                     else:
                         text = build_reply_text(src)
+                        inc_stat("generic")
 
 
-                    with_meme = (random.random() < MEME_PROBABILITY)
+                    with_meme = (random.random() < current_meme_prob)
                     try:
                         post_reply(text, tid, with_meme)
                         remember_and_maybe_backup(tid)
@@ -834,7 +770,8 @@ def main():
                             "Reply (mention) → %s | %s%s",
                             tid, text, " [+meme]" if with_meme else ""
                         )
-                        time.sleep(READ_COOLDOWN_S)
+                        time.sleep(current_cooldown)
+
                     except tweepy.TweepyException as e:
                         if "duplicate" in str(e).lower():
                             log.warning("Duplicate content blocked; skipping.")
@@ -843,6 +780,26 @@ def main():
                             log.warning("Reply fehlgeschlagen: %s", e)
                     except Exception as e:
                         log.warning("Reply fehlgeschlagen: %s", e)
+
+                    # --- Mentions-Zeitstempel für Auto-Boost merken ---
+                    if BOOST_ENABLED:
+                        now_ts = time.time()
+                        recent_mentions_ts.append(now_ts)
+
+                        # alte Einträge entfernen
+                        cutoff = now_ts - BOOST_MENTION_WINDOW_S
+                        recent_mentions_ts = [t for t in recent_mentions_ts if t >= cutoff]
+
+                        # Boost auslösen
+                        if not auto_boost_active and len(recent_mentions_ts) >= BOOST_MIN_MENTIONS:
+                            boost_until_ts = now_ts + BOOST_DURATION_S
+                            log.info(
+                                "BOOST MODE activated automatically for %d seconds "
+                                "(%d mentions in last %d s).",
+                                BOOST_DURATION_S,
+                                len(recent_mentions_ts),
+                                BOOST_MENTION_WINDOW_S,
+                            )
 
 
             # 2) KOL Timelines
@@ -874,21 +831,26 @@ def main():
                         if ONLY_ORIGINAL and hasattr(tw, "referenced_tweets") and tw.referenced_tweets:
                             # Sicherheitshalber, falls exclude nicht greift
                             continue
-                        if random.random() > REPLY_PROBABILITY:
-                            continue
+                        if random.random() > current_reply_prob:
+                         continue
 
                         text = build_reply_text(tw.text or "")
-                        with_meme = (random.random() < MEME_PROBABILITY)
+                        with_meme = (random.random() < current_meme_prob)
 
                         try:
                             post_reply(text, tid, with_meme)
                             remember_and_maybe_backup(tid)
                             replies_today[uid] += 1
+                            inc_stat("total_replies")
+                            inc_stat("kol_replies")
+                            flush_stats_if_needed()
                             log.info(
                                 "Reply → %s | %s%s",
                                 tid, text, " [+meme]" if with_meme else ""
                             )
-                            time.sleep(READ_COOLDOWN_S)
+                            time.sleep(current_cooldown)
+
+
                         except tweepy.TweepyException as e:
                             # Duplicate content block → als gesehen markieren
                             if "duplicate" in str(e).lower():
