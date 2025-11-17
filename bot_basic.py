@@ -37,6 +37,10 @@ PER_KOL_MIN_POLL_S    = int(os.environ.get("PER_KOL_MIN_POLL_S", "1200"))  # 20 
 LOOP_SLEEP_SECONDS    = int(os.environ.get("LOOP_SLEEP_SECONDS", "240"))   # 4 min
 MAX_REPLIES_PER_KOL_PER_DAY = int(os.environ.get("MAX_REPLIES_PER_KOL_PER_DAY", "3"))
 
+# Boost-Cooldown (schnellere Antworten im Boost-Mode)
+BOOST_COOLDOWN_S = int(os.environ.get("BOOST_COOLDOWN_S", "3"))
+
+
 # Wahrscheinlichkeit
 REPLY_PROBABILITY     = float(os.environ.get("REPLY_PROBABILITY", "1.0"))
 DEX_REPLY_PROB        = float(os.environ.get("DEX_REPLY_PROB", "0.5"))
