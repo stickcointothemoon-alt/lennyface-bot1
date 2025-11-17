@@ -632,7 +632,6 @@ def build_roast_reply(context_snippet: str = "") -> str:
 # Main Loop
 # =========================
 def main():
-
     # *** Start-Delay verhindert sofortiges Rate-Limit nach Deploy ***
     log.info("Warte 30 Sekunden, um Rate-Limit nach Deploy zu vermeiden…")
     time.sleep(30)
@@ -650,32 +649,13 @@ def main():
 
     last_mention_since = None
     last_kol_since = {uid: None for uid in TARGET_IDS}
-    
-    # Boost-Mode State
-    boost_until_ts = 0.0
-    recent_mentions_ts = []  # Liste von Zeitstempeln (Sekunden) für eingehende Mentions
 
+    # ==== BOOST STATE ====
+    boost_until_ts = 0.0           # UNIX-Timestamp, bis wann Boost aktiv ist
+    recent_mentions = []           # Liste von Timestamps der letzten Mentions
 
     while True:
         try:
-             now_ts = time.time()
-
-            # prüfen, ob Auto-Boost noch läuft
-            auto_boost_active = BOOST_ENABLED and (now_ts < boost_until_ts)
-            # manueller Boost über ENV (z.B. Dashboard)
-            manual_boost_active = BOOST_ENABLED and BOOST_MANUAL_FLAG
-
-            boost_active = auto_boost_active or manual_boost_active
-
-            if boost_active:
-                current_cooldown   = BOOST_READ_COOLDOWN_S
-                current_reply_prob = BOOST_REPLY_PROB
-                current_meme_prob  = BOOST_MEME_PROB
-            else:
-                current_cooldown   = READ_COOLDOWN_S
-                current_reply_prob = REPLY_PROBABILITY
-                current_meme_prob  = MEME_PROBABILITY
-
             # Bot pausieren über ENV
             if os.environ.get("BOT_PAUSED", "0") == "1":
                 log.info("BOT_PAUSED=1 → Bot pausiert, schlafe nur.")
@@ -687,6 +667,28 @@ def main():
             if today != day_marker:
                 day_marker = today
                 replies_today = {uid: 0 for uid in TARGET_IDS}
+
+            # ==== BOOST-CALC GLOBAL FÜR DIESE LOOP-RUN ====
+            now_ts = time.time()
+
+            # alte Mentions aus dem Fenster entfernen
+            recent_mentions = [
+                t for t in recent_mentions
+                if now_ts - t < BOOST_MENTION_WINDOW_S
+            ]
+
+            # ist Auto-Boost aktuell aktiv?
+            auto_boost_active = BOOST_ENABLED and (now_ts < boost_until_ts)
+
+            # effektive Parameter wählen
+            if auto_boost_active:
+                reply_prob_effective = BOOST_REPLY_PROB
+                meme_prob_effective = BOOST_MEME_PROB
+                cooldown_effective = BOOST_COOLDOWN_S
+            else:
+                reply_prob_effective = REPLY_PROBABILITY
+                meme_prob_effective = MEME_PROBABILITY
+                cooldown_effective = READ_COOLDOWN_S
 
             # 1) Mentions beantworten (Bot wird angepingt)
             ments = fetch_mentions(my_user_id, since_id=last_mention_since)
@@ -715,23 +717,51 @@ def main():
                         # Gruppen-Mentions / andere User → ignorieren
                         continue
 
+                    # hier merken wir, dass jemand uns direkt nutzt
+                    now_ts = time.time()
+                    recent_mentions.append(now_ts)
+
+                    # Auto-Boost triggern, wenn genug Mentions im Fenster
+                    if (
+                        BOOST_ENABLED
+                        and len(recent_mentions) >= BOOST_MIN_MENTIONS
+                        and now_ts >= boost_until_ts
+                    ):
+                        boost_until_ts = now_ts + BOOST_DURATION_S
+                        log.info(
+                            "BOOST MODE activated automatically for %d seconds (until %s)",
+                            BOOST_DURATION_S,
+                            datetime.fromtimestamp(
+                                boost_until_ts, tz=timezone.utc
+                            ).isoformat(),
+                        )
+
+                    # nach evtl. neuem Boost erneut effektive Settings bestimmen
+                    auto_boost_active = BOOST_ENABLED and (time.time() < boost_until_ts)
+                    if auto_boost_active:
+                        reply_prob_effective = BOOST_REPLY_PROB
+                        meme_prob_effective = BOOST_MEME_PROB
+                        cooldown_effective = BOOST_COOLDOWN_S
+                    else:
+                        reply_prob_effective = REPLY_PROBABILITY
+                        meme_prob_effective = MEME_PROBABILITY
+                        cooldown_effective = READ_COOLDOWN_S
+
                     if already_replied(tid):
                         continue
-                    if random.random() > current_reply_prob:
+                    if random.random() > reply_prob_effective:
                         continue
 
-                                        # --- Command-Erkennung ---
+                    # --- Command-Erkennung ---
                     src_lower = src.lower()
 
                     # 1) HELP
                     if "help" in src_lower:
                         text = build_help_reply()
-                        inc_stat("help")
 
                     # 2) LORE
                     elif "lore" in src_lower:
                         text = build_lore_reply()
-                        inc_stat("lore")
 
                     # 3) PRICE / MC / STATS / VOLUME / CHART
                     elif any(k in src_lower for k in [
@@ -739,30 +769,24 @@ def main():
                         "volume", "vol ", "stats", "chart"
                     ]):
                         text = build_market_reply(src)
-                        inc_stat("market")
 
                     # 4) ALPHA
                     elif "alpha" in src_lower:
                         text = build_alpha_reply(src)
-                        inc_stat("alpha")
 
                     # 5) GM
                     elif src_lower.startswith("gm") or " gm" in src_lower:
                         text = build_gm_reply(src)
-                        inc_stat("gm")
 
                     # 6) ROAST
                     elif "roast me" in src_lower or " roast" in src_lower:
                         text = build_roast_reply(src)
-                        inc_stat("roast")
 
                     # 7) Default-Shill
                     else:
                         text = build_reply_text(src)
-                        inc_stat("generic")
 
-
-                    with_meme = (random.random() < current_meme_prob)
+                    with_meme = (random.random() < meme_prob_effective)
                     try:
                         post_reply(text, tid, with_meme)
                         remember_and_maybe_backup(tid)
@@ -770,8 +794,7 @@ def main():
                             "Reply (mention) → %s | %s%s",
                             tid, text, " [+meme]" if with_meme else ""
                         )
-                        time.sleep(current_cooldown)
-
+                        time.sleep(cooldown_effective)
                     except tweepy.TweepyException as e:
                         if "duplicate" in str(e).lower():
                             log.warning("Duplicate content blocked; skipping.")
@@ -781,33 +804,12 @@ def main():
                     except Exception as e:
                         log.warning("Reply fehlgeschlagen: %s", e)
 
-                    # --- Mentions-Zeitstempel für Auto-Boost merken ---
-                    if BOOST_ENABLED:
-                        now_ts = time.time()
-                        recent_mentions_ts.append(now_ts)
-
-                        # alte Einträge entfernen
-                        cutoff = now_ts - BOOST_MENTION_WINDOW_S
-                        recent_mentions_ts = [t for t in recent_mentions_ts if t >= cutoff]
-
-                        # Boost auslösen
-                        if not auto_boost_active and len(recent_mentions_ts) >= BOOST_MIN_MENTIONS:
-                            boost_until_ts = now_ts + BOOST_DURATION_S
-                            log.info(
-                                "BOOST MODE activated automatically for %d seconds "
-                                "(%d mentions in last %d s).",
-                                BOOST_DURATION_S,
-                                len(recent_mentions_ts),
-                                BOOST_MENTION_WINDOW_S,
-                            )
-
-
             # 2) KOL Timelines
-            now = time.time()
+            now_ts = time.time()
             for uid in TARGET_IDS:
-                if now - last_checked[uid] < PER_KOL_MIN_POLL_S:
+                if now_ts - last_checked[uid] < PER_KOL_MIN_POLL_S:
                     continue
-                last_checked[uid] = now
+                last_checked[uid] = now_ts
 
                 tweets = fetch_user_tweets(uid, since_id=last_kol_since.get(uid))
                 log.info("KOL %s: fetched %d tweets", uid, len(tweets))
@@ -831,26 +833,21 @@ def main():
                         if ONLY_ORIGINAL and hasattr(tw, "referenced_tweets") and tw.referenced_tweets:
                             # Sicherheitshalber, falls exclude nicht greift
                             continue
-                        if random.random() > current_reply_prob:
-                         continue
+                        if random.random() > reply_prob_effective:
+                            continue
 
                         text = build_reply_text(tw.text or "")
-                        with_meme = (random.random() < current_meme_prob)
+                        with_meme = (random.random() < meme_prob_effective)
 
                         try:
                             post_reply(text, tid, with_meme)
                             remember_and_maybe_backup(tid)
                             replies_today[uid] += 1
-                            inc_stat("total_replies")
-                            inc_stat("kol_replies")
-                            flush_stats_if_needed()
                             log.info(
                                 "Reply → %s | %s%s",
                                 tid, text, " [+meme]" if with_meme else ""
                             )
-                            time.sleep(current_cooldown)
-
-
+                            time.sleep(cooldown_effective)
                         except tweepy.TweepyException as e:
                             # Duplicate content block → als gesehen markieren
                             if "duplicate" in str(e).lower():
@@ -871,6 +868,7 @@ def main():
             traceback.print_exc()
             # Crash vermeiden, kurze Pause
             time.sleep(10)
+
 
 if __name__ == "__main__":
     main()
