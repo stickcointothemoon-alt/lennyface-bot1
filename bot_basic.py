@@ -896,27 +896,26 @@ def main():
 
 
                     with_meme = (random.random() < MEME_PROBABILITY)
-                    try:
-                        post_reply(text, tid, with_meme)
-                        remember_and_maybe_backup(tid)
+try:
+    post_reply(text, tid, with_meme)
+    remember_and_maybe_backup(tid)
 
-                  # NEW: Stats für Dashboard
-                  bump_stats(kind="mention", used_meme=with_meme)
+    # NEW: Stats fürs Dashboard (Mentions)
+    bump_stats(kind="mention", used_meme=with_meme)
 
-                  log.info(
-                  "Reply (mention) → %s | %s%s",
-                   tid, text, " [+meme]" if with_meme else ""
-                   )
-                   time.sleep(READ_COOLDOWN_S)
-
-                    except tweepy.TweepyException as e:
-                        if "duplicate" in str(e).lower():
-                            log.warning("Duplicate content blocked; skipping.")
-                            remember_and_maybe_backup(tid)  # trotzdem merken
-                        else:
-                            log.warning("Reply fehlgeschlagen: %s", e)
-                    except Exception as e:
-                        log.warning("Reply fehlgeschlagen: %s", e)
+    log.info(
+        "Reply (mention) → %s | %s%s",
+        tid, text, " [+meme]" if with_meme else ""
+    )
+    time.sleep(READ_COOLDOWN_S)
+except tweepy.TweepyException as e:
+    if "duplicate" in str(e).lower():
+        log.warning("Duplicate content blocked; skipping.")
+        remember_and_maybe_backup(tid)  # trotzdem merken
+    else:
+        log.warning("Reply fehlgeschlagen: %s", e)
+except Exception as e:
+    log.warning("Reply fehlgeschlagen: %s", e)
 
 
             # 2) KOL Timelines
