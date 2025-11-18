@@ -51,10 +51,22 @@ MEME_PROBABILITY      = float(os.environ.get("MEME_PROBABILITY", "0.3"))
 
 # Extra-Auto-Meme-Logik: wenn Tweet "nach Meme aussieht"
 AUTO_MEME_EXTRA_CHANCE = float(os.environ.get("AUTO_MEME_EXTRA_CHANCE", "0.5"))
-MEME_KEYWORDS = [
-    "lfg", "wagmi", "ngmi", "send it", "moon", "pump", "rekt",
-    "lol", "haha", "😂", "🤣", "meme", "( ͡° ͜ʖ ͡°)"
 
+MEME_KEYWORDS = [
+    "lfg",
+    "wagmi",
+    "ngmi",
+    "send it",
+    "moon",
+    "pump",
+    "rekt",
+    "lol",
+    "haha",
+    "😂",
+    "🤣",
+    "meme",
+    "( ͡° ͜ʖ ͡°)",
+]
 # Feature-Toggles (für Dashboard / Commands)
 ENABLE_HELP   = os.environ.get("ENABLE_HELP", "1") == "1"
 ENABLE_LORE   = os.environ.get("ENABLE_LORE", "1") == "1"
