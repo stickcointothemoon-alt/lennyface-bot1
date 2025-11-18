@@ -888,18 +888,18 @@ def main():
                     if random.random() > REPLY_PROBABILITY:
                         continue
 
-                    # --- Command-Erkennung ---
+                                        # --- Command-Erkennung mit Toggles ---
 
                     src_lower = src.lower()
                     cmd_used = None  # für User-Memory
 
                     # 1) HELP
-                    if "help" in src_lower:
+                    if "help" in src_lower and ENABLE_HELP:
                         text = build_help_reply()
                         cmd_used = "help"
 
                     # 2) LORE
-                    elif "lore" in src_lower:
+                    elif "lore" in src_lower and ENABLE_LORE:
                         text = build_lore_reply()
                         cmd_used = "lore"
 
@@ -907,22 +907,22 @@ def main():
                     elif any(k in src_lower for k in [
                         "price", " mc", "market cap", "marketcap",
                         "volume", "vol ", "stats", "chart"
-                    ]):
+                    ]) and ENABLE_STATS:
                         text = build_market_reply(src)
                         cmd_used = "price"
 
                     # 4) ALPHA
-                    elif "alpha" in src_lower:
+                    elif "alpha" in src_lower and ENABLE_ALPHA:
                         text = build_alpha_reply(src)
                         cmd_used = "alpha"
 
                     # 5) GM
-                    elif src_lower.startswith("gm") or " gm" in src_lower:
+                    elif (src_lower.startswith("gm") or " gm" in src_lower) and ENABLE_GM:
                         text = build_gm_reply(src)
                         cmd_used = "gm"
 
                     # 6) ROAST
-                    elif "roast me" in src_lower or " roast" in src_lower:
+                    elif ("roast me" in src_lower or " roast" in src_lower) and ENABLE_ROAST:
                         text = build_roast_reply(src)
                         cmd_used = "roast"
 
@@ -930,6 +930,7 @@ def main():
                     else:
                         text = build_reply_text(src)
                         cmd_used = "shill"
+
 
                     # User-Memory updaten (nur für Mentions sinnvoll)
                     author_id_str = str(tw.author_id)
