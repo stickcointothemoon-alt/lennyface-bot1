@@ -974,7 +974,7 @@ def main():
                 if not tweets:
                     continue
 
-                # von alt -> neu
+                # von alt → neu
                 for tw in sorted(tweets, key=lambda x: int(x.id)):
                     tid = str(tw.id)
                     last_kol_since[uid] = tid
@@ -995,20 +995,25 @@ def main():
                     if random.random() > REPLY_PROBABILITY:
                         continue
 
-                     text = build_reply_text(tw.text or "")
-                     with_meme = should_attach_meme(tw.text or "")
+                    src_text = tw.text or ""
+                    text = build_reply_text(src_text)
+
+                    # Basis-Meme-Chance
+                    base_meme_flag = (random.random() < MEME_PROBABILITY)
+                    # Extra-Chance, wenn Tweet "memeig" aussieht
+                    extra_meme_flag = is_meme_like(src_text) and (random.random() < AUTO_MEME_EXTRA_CHANCE)
+                    with_meme = base_meme_flag or extra_meme_flag
 
                     try:
                         post_reply(text, tid, with_meme)
                         remember_and_maybe_backup(tid)
-
-                        # NEW: Stats fürs Dashboard (KOL-Replies)
                         bump_stats(kind="kol", used_meme=with_meme)
-
                         replies_today[uid] += 1
                         log.info(
                             "Reply → %s | %s%s",
-                            tid, text, " [+meme]" if with_meme else ""
+                            tid,
+                            text,
+                            " [+meme]" if with_meme else "",
                         )
                         time.sleep(READ_COOLDOWN_S)
                     except tweepy.TweepyException as e:
@@ -1024,6 +1029,7 @@ def main():
                     except Exception as e:
                         log.warning("Reply fehlgeschlagen: %s", e)
 
+            # Hauptschlaf am Ende der Schleife
             time.sleep(LOOP_SLEEP_SECONDS)
 
         except Exception as e:
