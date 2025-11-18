@@ -17,13 +17,13 @@ LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
 DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 
 # Grok Settings (nur für Preview genutzt)
-GROK_API_KEY          = os.environ.get("GROK_API_KEY", "")
-GROK_BASE_URL         = os.environ.get("GROK_BASE_URL", "https://api.x.ai")
-GROK_MODEL            = os.environ.get("GROK_MODEL", "grok-3")
-GROK_TONE             = os.environ.get("GROK_TONE", "normal")
-GROK_FORCE_ENGLISH    = os.environ.get("GROK_FORCE_ENGLISH", "1")
+GROK_API_KEY            = os.environ.get("GROK_API_KEY", "")
+GROK_BASE_URL           = os.environ.get("GROK_BASE_URL", "https://api.x.ai")
+GROK_MODEL              = os.environ.get("GROK_MODEL", "grok-3")
+GROK_TONE               = os.environ.get("GROK_TONE", "normal")
+GROK_FORCE_ENGLISH      = os.environ.get("GROK_FORCE_ENGLISH", "1")
 GROK_ALWAYS_SHILL_LENNY = os.environ.get("GROK_ALWAYS_SHILL_LENNY", "1")
-GROK_EXTRA_PROMPT     = os.environ.get("GROK_EXTRA_PROMPT", "")
+GROK_EXTRA_PROMPT       = os.environ.get("GROK_EXTRA_PROMPT", "")
 
 # Bot Handle (für Help-Box)
 BOT_HANDLE = os.environ.get("BOT_HANDLE", "lennyface_bot").lstrip("@")
@@ -60,7 +60,9 @@ def heroku_get_config():
 def heroku_set_config(changes: dict):
     """Setzt Config Vars auf Heroku (nur teilweise, andere bleiben)."""
     url = f"https://api.heroku.com/apps/{HEROKU_APP_NAME}/config-vars"
-    resp = requests.patch(url, headers=heroku_headers(), data=json.dumps(changes), timeout=10)
+    resp = requests.patch(
+        url, headers=heroku_headers(), data=json.dumps(changes), timeout=10
+    )
     resp.raise_for_status()
     return resp.json()
 
@@ -98,7 +100,7 @@ def fetch_lenny_stats_for_dashboard():
 
         pair = pairs[0]
         price = float(pair.get("priceUsd") or 0)
-        mc    = float(pair.get("fdv") or pair.get("marketCap") or 0)
+        mc = float(pair.get("fdv") or pair.get("marketCap") or 0)
         vol24 = float(
             (pair.get("volume") or {}).get("h24")
             or pair.get("volume24h")
@@ -271,19 +273,27 @@ def render_dashboard(preview_text: str | None = None):
     read_cooldown = cfg.get("READ_COOLDOWN_S", os.environ.get("READ_COOLDOWN_S", "6"))
     loop_sleep = cfg.get("LOOP_SLEEP_SECONDS", os.environ.get("LOOP_SLEEP_SECONDS", "240"))
 
-    boost_enabled   = cfg.get("BOOST_ENABLED", os.environ.get("BOOST_ENABLED", "1"))
-    boost_cooldown  = cfg.get("BOOST_COOLDOWN_S", os.environ.get("BOOST_COOLDOWN_S", "3"))
-    boost_duration  = cfg.get("BOOST_DURATION_S", os.environ.get("BOOST_DURATION_S", "600"))
+    boost_enabled  = cfg.get("BOOST_ENABLED", os.environ.get("BOOST_ENABLED", "1"))
+    boost_cooldown = cfg.get("BOOST_COOLDOWN_S", os.environ.get("BOOST_COOLDOWN_S", "3"))
+    boost_duration = cfg.get("BOOST_DURATION_S", os.environ.get("BOOST_DURATION_S", "600"))
+
+    # Command-Toggles aus Config
+    enable_help  = cfg.get("ENABLE_HELP", os.environ.get("ENABLE_HELP", "1"))
+    enable_lore  = cfg.get("ENABLE_LORE", os.environ.get("ENABLE_LORE", "1"))
+    enable_stats = cfg.get("ENABLE_STATS", os.environ.get("ENABLE_STATS", "1"))
+    enable_alpha = cfg.get("ENABLE_ALPHA", os.environ.get("ENABLE_ALPHA", "1"))
+    enable_gm    = cfg.get("ENABLE_GM", os.environ.get("ENABLE_GM", "1"))
+    enable_roast = cfg.get("ENABLE_ROAST", os.environ.get("ENABLE_ROAST", "1"))
 
     # Stats aus Config (vom Bot geschrieben)
-    stats_date   = cfg.get("STATS_DATE", "")
-    stats_total  = cfg.get("STATS_REPLIES_TOTAL", "0")
-    stats_mens   = cfg.get("STATS_REPLIES_MENTIONS", "0")
-    stats_kol    = cfg.get("STATS_REPLIES_KOL", "0")
-    stats_memes  = cfg.get("STATS_MEMES_USED", "0")
+    stats_date  = cfg.get("STATS_DATE", "")
+    stats_total = cfg.get("STATS_REPLIES_TOTAL", "0")
+    stats_mens  = cfg.get("STATS_REPLIES_MENTIONS", "0")
+    stats_kol   = cfg.get("STATS_REPLIES_KOL", "0")
+    stats_memes = cfg.get("STATS_MEMES_USED", "0")
 
     # Market Daten
-    lenny_stats = fetch_lenny_stats_for_dashboard()
+    lenny_stats  = fetch_lenny_stats_for_dashboard()
     global_stats = fetch_global_stats()
 
     template = """
@@ -652,6 +662,49 @@ def render_dashboard(preview_text: str | None = None):
     </div>
   </div>
 
+  <!-- COMMAND TOGGLES -->
+  <div class="card">
+    <h2>Command Toggles</h2>
+    <form method="post" action="{{ url_for('update_commands_v3') }}?key={{ key }}">
+      <input type="hidden" name="key" value="{{ key }}">
+
+      <label>
+        <input type="checkbox" name="enable_help" value="1" {% if enable_help=='1' %}checked{% endif %}>
+        Enable <code>help</code>
+      </label>
+
+      <label>
+        <input type="checkbox" name="enable_lore" value="1" {% if enable_lore=='1' %}checked{% endif %}>
+        Enable <code>lore</code>
+      </label>
+
+      <label>
+        <input type="checkbox" name="enable_stats" value="1" {% if enable_stats=='1' %}checked{% endif %}>
+        Enable <code>price/mc/stats/volume/chart</code>
+      </label>
+
+      <label>
+        <input type="checkbox" name="enable_alpha" value="1" {% if enable_alpha=='1' %}checked{% endif %}>
+        Enable <code>alpha</code>
+      </label>
+
+      <label>
+        <input type="checkbox" name="enable_gm" value="1" {% if enable_gm=='1' %}checked{% endif %}>
+        Enable <code>gm</code>
+      </label>
+
+      <label>
+        <input type="checkbox" name="enable_roast" value="1" {% if enable_roast=='1' %}checked{% endif %}>
+        Enable <code>roast</code>
+      </label>
+
+      <button class="btn btn-green" type="submit">Save Command Settings</button>
+    </form>
+    <small>
+      Wenn ein Command deaktiviert ist, antwortet der Bot stattdessen mit einem normalen $LENNY-Shill.
+    </small>
+  </div>
+
   <!-- REPLY SIMULATOR -->
   <div class="card">
     <h2>Reply Simulator (Grok Preview)</h2>
@@ -730,6 +783,12 @@ Contains: roast / "roast me"
         boost_enabled=boost_enabled,
         boost_cooldown=boost_cooldown,
         boost_duration=boost_duration,
+        enable_help=enable_help,
+        enable_lore=enable_lore,
+        enable_stats=enable_stats,
+        enable_alpha=enable_alpha,
+        enable_gm=enable_gm,
+        enable_roast=enable_roast,
         stats_date=stats_date,
         stats_total=stats_total,
         stats_mens=stats_mens,
@@ -822,6 +881,31 @@ def update_boost_v3():
         "BOOST_DURATION_S": duration,
     })
 
+    key = request.args.get("key", "")
+    return redirect(url_for("index_v3", key=key))
+
+
+# -----------------------------
+# COMMAND TOGGLES
+# -----------------------------
+@app.route("/update_commands_v3", methods=["POST"])
+def update_commands_v3():
+    require_key()
+
+    def flag(field_name: str) -> str:
+        # Checkbox → "1" wenn angehakt, sonst "0"
+        return "1" if request.form.get(field_name) == "1" else "0"
+
+    changes = {
+        "ENABLE_HELP":  flag("enable_help"),
+        "ENABLE_LORE":  flag("enable_lore"),
+        "ENABLE_STATS": flag("enable_stats"),
+        "ENABLE_ALPHA": flag("enable_alpha"),
+        "ENABLE_GM":    flag("enable_gm"),
+        "ENABLE_ROAST": flag("enable_roast"),
+    }
+
+    heroku_set_config(changes)
     key = request.args.get("key", "")
     return redirect(url_for("index_v3", key=key))
 
