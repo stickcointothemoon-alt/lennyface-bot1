@@ -49,6 +49,12 @@ ONLY_ORIGINAL         = os.environ.get("ONLY_ORIGINAL", "1") == "1"
 # Meme-Frequenz
 MEME_PROBABILITY      = float(os.environ.get("MEME_PROBABILITY", "0.3"))
 
+# Extra-Auto-Meme-Logik: wenn Tweet "nach Meme aussieht"
+AUTO_MEME_EXTRA_CHANCE = float(os.environ.get("AUTO_MEME_EXTRA_CHANCE", "0.5"))
+MEME_KEYWORDS = [
+    "lfg", "wagmi", "ngmi", "send it", "moon", "pump", "rekt",
+    "lol", "haha", "😂", "🤣", "meme", "( ͡° ͜ʖ ͡°)"
+
 # Feature-Toggles (für Dashboard / Commands)
 ENABLE_HELP   = os.environ.get("ENABLE_HELP", "1") == "1"
 ENABLE_LORE   = os.environ.get("ENABLE_LORE", "1") == "1"
@@ -216,6 +222,95 @@ def bump_stats(kind: str, used_meme: bool):
     if _STATS_SINCE_FLUSH >= _STATS_FLUSH_EVERY:
         _STATS_SINCE_FLUSH = 0
         _flush_stats_to_env()
+
+# =========================
+# Simple User-Memory (nur im RAM)
+# =========================
+USER_PROFILES = {}
+MAX_USER_PROFILES = 500  # Sicherheit, damit RAM nicht voll läuft
+
+
+def get_user_profile(user_id: str) -> dict:
+    """
+    Holt oder erzeugt ein kleines Profil pro User.
+    Wird nicht persistent gespeichert, nur solange der Dyno läuft.
+    """
+    if user_id not in USER_PROFILES:
+        # Hard-Cap: wenn zu viele User, werfe den ältesten raus
+        if len(USER_PROFILES) >= MAX_USER_PROFILES:
+            # Primitive Eviction: ersten Key rauswerfen
+            oldest_key = next(iter(USER_PROFILES.keys()))
+            USER_PROFILES.pop(oldest_key, None)
+
+        USER_PROFILES[user_id] = {
+            "total_interactions": 0,
+            "last_seen": None,
+            "commands_used": {},  # z.B. {"help": 2, "lore": 1}
+        }
+    return USER_PROFILES[user_id]
+
+
+def update_user_profile(user_id: str, command: str | None = None):
+    """
+    Aktualisiert das Profil, z.B. wenn wir auf eine Mention antworten.
+    command kann z.B. 'help', 'lore', 'alpha', 'gm', 'roast', 'price' sein.
+    """
+    prof = get_user_profile(user_id)
+    prof["total_interactions"] += 1
+    prof["last_seen"] = datetime.now(timezone.utc).isoformat()
+    if command:
+        prof["commands_used"][command] = prof["commands_used"].get(command, 0) + 1
+
+
+def personalize_reply(base_text: str, user_id: str) -> str:
+    """
+    Kleiner Bonus-Touch abhängig vom User.
+    NICHT übertreiben, nur minimaler Flavor.
+    """
+    prof = get_user_profile(user_id)
+    total = prof.get("total_interactions", 0)
+
+    # Wenn jemand schon öfter mit dem Bot gespielt hat → kleiner Insider
+    extra = ""
+    if total >= 5 and "Back again" not in base_text and "again" not in base_text:
+        extra = " Back again, degen ( ͡° ͜ʖ ͡°)"
+
+    if not extra:
+        return base_text
+
+    # Safety: Länge unter 280 halten
+    if len(base_text) + len(extra) <= 270:
+        return base_text + extra
+    return base_text  # zu lang, dann lieber weglassen
+
+
+# =========================
+# Meme-Entscheidungs-Logik
+# =========================
+def looks_like_meme_tweet(text: str) -> bool:
+    """Checkt, ob der Inhalt nach Meme / degen Tweet aussieht."""
+    t = (text or "").lower()
+    for kw in MEME_KEYWORDS:
+        if kw.lower() in t:
+            return True
+    return False
+
+
+def should_attach_meme(text: str) -> bool:
+    """
+    Entscheidet, ob ein Meme angehängt wird.
+    Basis: MEME_PROBABILITY
+    Plus Bonus-Chance, wenn der Tweet nach Meme aussieht.
+    """
+    base = (random.random() < MEME_PROBABILITY)
+    if looks_like_meme_tweet(text):
+        # Wenn Basis schon True → Meme
+        if base:
+            return True
+        # Wenn Basis False → zusätzliche Chance
+        return random.random() < AUTO_MEME_EXTRA_CHANCE
+    return base
+
 
 
 def already_replied(tweet_id: str) -> bool:
@@ -782,45 +877,61 @@ def main():
                         continue
 
                     # --- Command-Erkennung ---
+
                     src_lower = src.lower()
+                    cmd_used = None  # für User-Memory
 
                     # 1) HELP
-                    if "help" in src_lower and ENABLE_HELP:
+                    if "help" in src_lower:
                         text = build_help_reply()
+                        cmd_used = "help"
 
                     # 2) LORE
-                    elif "lore" in src_lower and ENABLE_LORE:
+                    elif "lore" in src_lower:
                         text = build_lore_reply()
+                        cmd_used = "lore"
 
                     # 3) PRICE / MC / STATS / VOLUME / CHART
                     elif any(k in src_lower for k in [
                         "price", " mc", "market cap", "marketcap",
                         "volume", "vol ", "stats", "chart"
-                    ]) and ENABLE_STATS:
+                    ]):
                         text = build_market_reply(src)
+                        cmd_used = "price"
 
                     # 4) ALPHA
-                    elif "alpha" in src_lower and ENABLE_ALPHA:
+                    elif "alpha" in src_lower:
                         text = build_alpha_reply(src)
+                        cmd_used = "alpha"
 
                     # 5) GM
-                    elif (src_lower.startswith("gm") or " gm" in src_lower) and ENABLE_GM:
+                    elif src_lower.startswith("gm") or " gm" in src_lower:
                         text = build_gm_reply(src)
+                        cmd_used = "gm"
 
                     # 6) ROAST
-                    elif ("roast me" in src_lower or " roast" in src_lower) and ENABLE_ROAST:
+                    elif "roast me" in src_lower or " roast" in src_lower:
                         text = build_roast_reply(src)
+                        cmd_used = "roast"
 
                     # 7) Default-Shill
                     else:
                         text = build_reply_text(src)
+                        cmd_used = "shill"
 
-                    with_meme = (random.random() < MEME_PROBABILITY)
+                    # User-Memory updaten (nur für Mentions sinnvoll)
+                    author_id_str = str(tw.author_id)
+                    update_user_profile(author_id_str, cmd_used)
+                    text = personalize_reply(text, author_id_str)
+
+                    # Meme-Entscheidung (smart)
+                    with_meme = should_attach_meme(src)
+
                     try:
                         post_reply(text, tid, with_meme)
                         remember_and_maybe_backup(tid)
 
-                        # NEW: Stats fürs Dashboard (Mentions)
+                        # Stats fürs Dashboard
                         bump_stats(kind="mention", used_meme=with_meme)
 
                         log.info(
@@ -828,6 +939,7 @@ def main():
                             tid, text, " [+meme]" if with_meme else ""
                         )
                         time.sleep(READ_COOLDOWN_S)
+
                     except tweepy.TweepyException as e:
                         if "duplicate" in str(e).lower():
                             log.warning("Duplicate content blocked; skipping.")
@@ -871,8 +983,8 @@ def main():
                     if random.random() > REPLY_PROBABILITY:
                         continue
 
-                    text = build_reply_text(tw.text or "")
-                    with_meme = (random.random() < MEME_PROBABILITY)
+                     text = build_reply_text(tw.text or "")
+                     with_meme = should_attach_meme(tw.text or "")
 
                     try:
                         post_reply(text, tid, with_meme)
