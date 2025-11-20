@@ -87,6 +87,10 @@ BOOST_READ_COOLDOWN_S   = int(os.environ.get("BOOST_READ_COOLDOWN_S", "2"))  # s
 # manueller Boost über Config Var (z.B. Dashboard später)
 BOOST_MANUAL_FLAG       = os.environ.get("BOOST_MANUAL", "0") == "1"
 
+# User Cooldown (Anti-Repeat: wie oft pro User geantwortet wird)
+USER_REPLY_COOLDOWN_S = int(os.environ.get("USER_REPLY_COOLDOWN_S", "600"))  # 600s = 10 Min
+
+
 
 # Grok
 GROK_API_KEY   = os.environ.get("GROK_API_KEY","")
@@ -240,6 +244,33 @@ def bump_stats(kind: str, used_meme: bool):
 # =========================
 USER_PROFILES = {}
 MAX_USER_PROFILES = 500  # Sicherheit, damit RAM nicht voll läuft
+
+# Anti-Repeat: pro User nur alle X Sekunden antworten
+LAST_REPLY_PER_USER = {}
+
+
+def can_reply_to_user(user_id: str) -> bool:
+    """
+    Checkt, ob wir diesem User gerade antworten dürfen.
+    Nutzt USER_REPLY_COOLDOWN_S als Sperrzeit.
+    """
+    if USER_REPLY_COOLDOWN_S <= 0:
+        return True  # Cooldown deaktiviert
+
+    now = time.time()
+    last = LAST_REPLY_PER_USER.get(user_id)
+    if last is None:
+        return True
+    # wenn seit letzter Antwort weniger als Cooldown vergangen ist -> nicht antworten
+    return (now - last) >= USER_REPLY_COOLDOWN_S
+
+
+def mark_replied_to_user(user_id: str):
+    """
+    Merkt sich, wann wir zuletzt einem User geantwortet haben.
+    """
+    LAST_REPLY_PER_USER[user_id] = time.time()
+
 
 
 def get_user_profile(user_id: str) -> dict:
@@ -888,7 +919,20 @@ def main():
                     if random.random() > REPLY_PROBABILITY:
                         continue
 
-                                        # --- Command-Erkennung mit Toggles ---
+                    # Anti-Repeat: pro User nur alle X Sekunden antworten
+                    author_id_str = str(tw.author_id)
+                    if not can_reply_to_user(author_id_str):
+                        log.info(
+                            "Skip mention %s from user %s due to user cooldown (%ds)",
+                            tid,
+                            author_id_str,
+                            USER_REPLY_COOLDOWN_S,
+                        )
+                        remember_and_maybe_backup(tid)
+                        continue
+
+
+                    # --- Command-Erkennung mit Toggles ---
 
                     src_lower = src.lower()
                     cmd_used = None  # für User-Memory
@@ -969,6 +1013,9 @@ def main():
                         post_reply(text, tid, with_meme)
                         remember_and_maybe_backup(tid)
 
+                        # Anti-Repeat: Zeitstempel setzen
+                        mark_replied_to_user(author_id_str)
+
                         # Stats fürs Dashboard
                         bump_stats(kind="mention", used_meme=with_meme)
 
@@ -978,7 +1025,7 @@ def main():
                         )
                         time.sleep(READ_COOLDOWN_S)
 
-                    except tweepy.TweepyException as e:
+                        except tweepy.TweepyException as e:
                         if "duplicate" in str(e).lower():
                             log.warning("Duplicate content blocked; skipping.")
                             remember_and_maybe_backup(tid)  # trotzdem merken
