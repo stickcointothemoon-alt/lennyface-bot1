@@ -46,10 +46,9 @@ REPLY_PROBABILITY     = float(os.environ.get("REPLY_PROBABILITY", "1.0"))
 DEX_REPLY_PROB        = float(os.environ.get("DEX_REPLY_PROB", "0.5"))
 ONLY_ORIGINAL         = os.environ.get("ONLY_ORIGINAL", "1") == "1"
 
-# Meme-Frequenz
-MEME_PROBABILITY      = float(os.environ.get("MEME_PROBABILITY", "0.3"))
-
-# Extra-Auto-Meme-Logik: wenn Tweet "nach Meme aussieht"
+# Meme-Frequenz / Auto Meme Mode
+AUTO_MEME_MODE         = os.environ.get("AUTO_MEME_MODE", "1") == "1"  # Dashboard: ON/OFF
+MEME_PROBABILITY       = float(os.environ.get("MEME_PROBABILITY", "0.3"))
 AUTO_MEME_EXTRA_CHANCE = float(os.environ.get("AUTO_MEME_EXTRA_CHANCE", "0.5"))
 
 MEME_KEYWORDS = [
@@ -65,8 +64,8 @@ MEME_KEYWORDS = [
     "😂",
     "🤣",
     "meme",
-    "( ͡° ͜ʖ ͡°)",
 ]
+
 # Feature-Toggles (für Dashboard / Commands)
 ENABLE_HELP   = os.environ.get("ENABLE_HELP", "1") == "1"
 ENABLE_LORE   = os.environ.get("ENABLE_LORE", "1") == "1"
@@ -328,7 +327,7 @@ def personalize_reply(base_text: str, user_id: str) -> str:
 
 
 # =========================
-# Meme-Entscheidungs-Logik
+# Meme-Entscheidungs-Logik (Smart Meme Boost B)
 # =========================
 def looks_like_meme_tweet(text: str) -> bool:
     """Checkt, ob der Inhalt nach Meme / degen Tweet aussieht."""
@@ -341,18 +340,22 @@ def looks_like_meme_tweet(text: str) -> bool:
 
 def should_attach_meme(text: str) -> bool:
     """
-    Entscheidet, ob ein Meme angehängt wird.
-    Basis: MEME_PROBABILITY
-    Plus Bonus-Chance, wenn der Tweet nach Meme aussieht.
+    Smart Meme Boost:
+    - Respektiert AUTO_MEME_MODE (Dashboard ON/OFF)
+    - Basis-Chance über MEME_PROBABILITY
+    - Extra-Chance, wenn der Tweet „meme-ig“ aussieht (Keywords / Emojis)
     """
-    base = (random.random() < MEME_PROBABILITY)
-    if looks_like_meme_tweet(text):
-        # Wenn Basis schon True → Meme
-        if base:
-            return True
-        # Wenn Basis False → zusätzliche Chance
-        return random.random() < AUTO_MEME_EXTRA_CHANCE
-    return base
+    if not AUTO_MEME_MODE:
+        return False
+
+    # Basis-Chance
+    base_hit = (random.random() < MEME_PROBABILITY)
+
+    # Extra-Booster, wenn der Tweet nach Meme klingt
+    keyword_hit = looks_like_meme_tweet(text) and (random.random() < AUTO_MEME_EXTRA_CHANCE)
+
+    return base_hit or keyword_hit
+
 
 
 
@@ -1069,11 +1072,9 @@ def main():
                     src_text = tw.text or ""
                     text = build_reply_text(src_text)
 
-                    # Basis-Meme-Chance
-                    base_meme_flag = (random.random() < MEME_PROBABILITY)
-                    # Extra-Chance, wenn Tweet "memeig" aussieht
-                    extra_meme_flag = is_meme_like(src_text) and (random.random() < AUTO_MEME_EXTRA_CHANCE)
-                    with_meme = base_meme_flag or extra_meme_flag
+                    # Smart Meme Boost für KOL-Tweets
+                    with_meme = should_attach_meme(src_text)
+
 
                     try:
                         post_reply(text, tid, with_meme)
