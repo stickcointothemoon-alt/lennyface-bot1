@@ -1024,7 +1024,6 @@ def main():
                             tid, text, " [+meme]" if with_meme else ""
                         )
                         time.sleep(READ_COOLDOWN_S)
-
                         except tweepy.TweepyException as e:
                         if "duplicate" in str(e).lower():
                             log.warning("Duplicate content blocked; skipping.")
