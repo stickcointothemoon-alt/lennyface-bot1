@@ -890,7 +890,7 @@ def main():
 
                                         # --- Command-Erkennung mit Toggles ---
 
-                                        src_lower = src.lower()
+                    src_lower = src.lower()
                     cmd_used = None  # für User-Memory
 
                     # 1) HELP
