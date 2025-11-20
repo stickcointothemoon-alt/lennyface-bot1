@@ -887,7 +887,7 @@ def main():
                 day_marker = today
                 replies_today = {uid: 0 for uid in TARGET_IDS}
 
-            # 1) Mentions beantworten (Bot wird angepingt)
+                        # 1) Mentions beantworten (Bot wird angepingt)
             ments = fetch_mentions(my_user_id, since_id=last_mention_since)
             if ments:
                 log.info("Mentions fetched: %d", len(ments))
@@ -931,9 +931,7 @@ def main():
                         remember_and_maybe_backup(tid)
                         continue
 
-
                     # --- Command-Erkennung mit Toggles ---
-
                     src_lower = src.lower()
                     cmd_used = None  # für User-Memory
 
@@ -999,10 +997,7 @@ def main():
                         text = build_reply_text(src)
                         cmd_used = "shill"
 
-
-
-                    # User-Memory updaten (nur für Mentions sinnvoll)
-                    author_id_str = str(tw.author_id)
+                    # User-Memory updaten
                     update_user_profile(author_id_str, cmd_used)
                     text = personalize_reply(text, author_id_str)
 
@@ -1021,10 +1016,13 @@ def main():
 
                         log.info(
                             "Reply (mention) → %s | %s%s",
-                            tid, text, " [+meme]" if with_meme else ""
+                            tid,
+                            text,
+                            " [+meme]" if with_meme else "",
                         )
                         time.sleep(READ_COOLDOWN_S)
-                        except tweepy.TweepyException as e:
+
+                    except tweepy.TweepyException as e:
                         if "duplicate" in str(e).lower():
                             log.warning("Duplicate content blocked; skipping.")
                             remember_and_maybe_backup(tid)  # trotzdem merken
@@ -1032,6 +1030,7 @@ def main():
                             log.warning("Reply fehlgeschlagen: %s", e)
                     except Exception as e:
                         log.warning("Reply fehlgeschlagen: %s", e)
+
 
             # 2) KOL Timelines
             now = time.time()
