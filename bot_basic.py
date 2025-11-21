@@ -55,6 +55,21 @@ AUTO_MEME_EXTRA_CHANCE = float(os.environ.get("AUTO_MEME_EXTRA_CHANCE", "0.5"))
 # Auto Meme Mode (Dashboard Toggle)
 AUTO_MEME_MODE = os.environ.get("AUTO_MEME_MODE", "1") == "1"
 
+# Meme-Boost Settings (Smart Boost B)
+MEME_KEYWORDS = [
+    "meme", "pic", "image", "img", "photo",
+    "lenny", "face", "lennyface", "( ͡° ͜ʖ ͡°)",
+    "ascii", "funny", "joke", "gif",
+    "frog", "pepe", "troll", "clown"
+]
+
+# Sekundendauer, wie lange ein Boost aktiv bleibt, nachdem ein Meme-Keyword erkannt wurde
+MEME_BOOST_SECONDS = 10
+
+# interner Zustand (wird zur Laufzeit benutzt)
+meme_boost_until_ts = 0.0
+
+
 # Smart-Meme-Keywords (für Boost-Logik)
 MEME_KEYWORDS_SOFT = [
     "lfg",
@@ -379,39 +394,70 @@ def _meme_boost_score(text: str) -> float:
     return score
 
 
-def should_attach_meme(text: str, is_mention: bool = False) -> bool:
+def should_attach_meme(src: str) -> bool:
     """
-    Entscheidet, ob ein Meme angehängt wird.
+    Smart Meme Boost (Variante B)
+    - Respektiert AUTO_MEME_MODE (Dashboard)
+    - Basis-Wahrscheinlichkeit: MEME_PROBABILITY
+    - Wenn Meme-Keywords erkannt werden → kurzer Boost
+    - Während Boost: Basis + AUTO_MEME_EXTRA_CHANCE
+    """
+    global meme_boost_until_ts
 
-    - Respektiert AUTO_MEME_MODE (Dashboard Toggle)
-    - Basis: MEME_PROBABILITY
-    - Smart-Boost je nach Keywords im Text
-    - Mentions bekommen leicht höhere Chance als KOL-Tweets
-    """
-    if not AUTO_MEME_MODE:
+    if AUTO_MEME_MODE != "1":
         return False
 
-    # Basis-Wahrscheinlichkeit aus ENV
+    import time
+    import random
+
+    now = time.time()
+    src_lower = (src or "").lower()
+
+    # Basiswert aus ENV
     try:
-        base_prob = float(MEME_PROBABILITY)
+        base_p = float(MEME_PROBABILITY)
     except Exception:
-        base_prob = 0.3
+        base_p = 0.3
 
-    # Smart-Boost
-    boost = _meme_boost_score(text)
+    # Extra-Wert aus ENV
+    try:
+        extra_p = float(AUTO_MEME_EXTRA_CHANCE)
+    except Exception:
+        extra_p = 0.4
 
-    # Mentions dürfen etwas mehr Meme-Power haben
-    if is_mention:
-        boost += float(AUTO_MEME_EXTRA_CHANCE) * 0.5
+    # 1) Check auf Meme-Keywords → Boost aktivieren
+    triggered = any(k in src_lower for k in MEME_KEYWORDS)
+    if triggered:
+        meme_boost_until_ts = now + MEME_BOOST_SECONDS
+        log.info("Meme Boost triggered for %ds (keywords match)", MEME_BOOST_SECONDS)
 
-    prob = base_prob + boost
+    # 2) Prüfen, ob Boost aktuell aktiv ist
+    boosted_active = now < meme_boost_until_ts
+    if boosted_active:
+        effective_p = base_p + extra_p
+    else:
+        effective_p = base_p
 
-    # Sicherheits-Cap
-    if prob > 0.95:
-        prob = 0.95
+    # Clamp zwischen 0.0 und 1.0
+    if effective_p < 0.0:
+        effective_p = 0.0
+    if effective_p > 1.0:
+        effective_p = 1.0
 
-    # Finale Entscheidung
-    return random.random() < prob
+    roll = random.random()
+    decision = roll < effective_p
+
+    log.debug(
+        "should_attach_meme: triggered=%s, boosted_active=%s, p=%.3f, roll=%.3f → %s",
+        triggered,
+        boosted_active,
+        effective_p,
+        roll,
+        "YES" if decision else "NO",
+    )
+
+    return decision
+
 
 
 
