@@ -877,60 +877,11 @@ def _fetch_token_stats_for_compare(ca: str) -> dict | None:
         return None
 
 
-def _build_compare_registry() -> dict:
-    """
-    Registry aller Tokens, die der Bot für MC-Vergleiche kennt.
-    Key = normalized Name (lowercase, ohne $), Value = dict mit Infos.
-    """
-    reg = {}
-
-    # $LENNY immer drin
-    if LENNY_TOKEN_CA:
-        reg["lenny"] = {
-            "symbol": "$LENNY",
-            "ca": LENNY_TOKEN_CA,
-            # URL nur für den finalen Link, NICHT für die API-Calls
-            "url": DEX_TOKEN_URL or "",
-        }
-        # Optional: alias lennyface
-        reg["lennyface"] = reg["lenny"]
-
-    # COMPARE_TOKEN_1_* aus ENV
-    if COMPARE_TOKEN_1_NAME and COMPARE_TOKEN_1_CA:
-        key = COMPARE_TOKEN_1_NAME.lower().lstrip("$")
-        reg[key] = {
-            "symbol": f"${COMPARE_TOKEN_1_NAME.upper().lstrip('$')}",
-            "ca": COMPARE_TOKEN_1_CA,
-            "url": COMPARE_TOKEN_1_URL,
-        }
-
-    # 🔮 Später: COMPARE_TOKEN_2_*, COMPARE_TOKEN_3_* hier ergänzen
-
-    return reg
-
-
-COMPARE_REGISTRY = _build_compare_registry()
-
-
-def _extract_compare_keyword(part: str) -> str | None:
-    """
-    Versucht aus einem Text-Teil (links/rechts von 'vs') ein Token rauszulesen.
-    Nimmt erstes 'Wort' aus Buchstaben/Zahlen/$.
-    """
-    part = part.lower()
-    candidates = re.findall(r"[a-z0-9$]{2,15}", part)
-    for c in candidates:
-        c = c.strip().lstrip("$")
-        if len(c) >= 2:
-            return c
-    return None
-
-
 def build_mc_compare_reply(src: str) -> str:
     """
     Baut eine Antwort im Stil:
     'mc lenny vs troll' → vergleicht MC von $LENNY und $TROLL.
-    Nutzt COMPARE_REGISTRY und Dexscreener-API.
+    Nutzt COMPARE_REGISTRY und Dexscreener.
     """
     text_lower = src.lower()
     reg = COMPARE_REGISTRY
@@ -993,9 +944,9 @@ def build_mc_compare_reply(src: str) -> str:
     base_info = reg[base_key]
     other_info = reg[other_key]
 
-    # Stats holen – jetzt IMMER über die API (nur CA)
-    base_stats = _fetch_token_stats_for_compare(base_info["ca"])
-    other_stats = _fetch_token_stats_for_compare(other_info["ca"])
+    # Stats holen
+    base_stats = _fetch_token_stats_for_compare(base_info["ca"], base_info.get("url") or None)
+    other_stats = _fetch_token_stats_for_compare(other_info["ca"], other_info.get("url") or None)
 
     if not base_stats or not other_stats:
         return (
@@ -1013,6 +964,7 @@ def build_mc_compare_reply(src: str) -> str:
         )
 
     # Wir wollen: Wie oft größer ist other vs base?
+    # Beispiel: base = LENNY, other = TROLL
     factor = other_mc / base_mc
 
     base_label = base_info["symbol"]
@@ -1029,30 +981,25 @@ def build_mc_compare_reply(src: str) -> str:
     )
 
     if factor >= 1:
-    # Other is bigger
-    txt = (
-        f"{other_label} is sitting at ~{other_mc_str} MC, "
-        f"while {base_label} is around ~{base_mc_str}. That’s only about {factor:.1f}x difference. "
-        f"Not a crazy degen stretch if the smirk-power kicks in. ( ͡° ͜ʖ ͡°)"
-    )
-else:
-    # LENNY (or base) is bigger
-    inv = 1 / factor
-    txt = (
-        f"{base_label} is already ahead: ~{base_mc_str} MC vs {other_label} at ~{other_mc_str}. "
-        f"That’s roughly {inv:.1f}x bigger. Who’s the real meme king now, huh? ( ͡$ ͜ʖ ͡$)"
-    )
+        # Other is bigger
+        txt = (
+            f"{other_label} is sitting at ~{other_mc_str} MC, "
+            f"while {base_label} is around ~{base_mc_str}. That’s only about {factor:.1f}x difference. "
+            f"Not a crazy degen stretch if the smirk-power kicks in. ( ͡° ͜ʖ ͡°)"
+        )
+    else:
+        # LENNY (or base) is bigger
+        inv = 1 / factor
+        txt = (
+            f"{base_label} is already ahead: ~{base_mc_str} MC vs {other_label} at ~{other_mc_str}. "
+            f"That’s roughly {inv:.1f}x bigger. Who’s the real meme king now, huh? ( ͡$ ͜ʖ ͡$)"
+        )
 
-
-    # Dex-Link optional anhängen – hier nehmen wir die URL aus dem Registry-Eintrag,
-    # NICHT aus der API (die haben wir nur zum Rechnen benutzt).
-    base_link = base_info.get("url") or base_stats.get("url")
-    if base_link:
-        txt += f" {base_link}"
+    # Dex-Link optional anhängen (von base)
+    if base_stats.get("url"):
+        txt += f" {base_stats['url']}"
 
     return txt
-
-
 
     # -------- Mit Grok --------
     if GROK_API_KEY:
