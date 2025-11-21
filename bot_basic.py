@@ -46,12 +46,17 @@ REPLY_PROBABILITY     = float(os.environ.get("REPLY_PROBABILITY", "1.0"))
 DEX_REPLY_PROB        = float(os.environ.get("DEX_REPLY_PROB", "0.5"))
 ONLY_ORIGINAL         = os.environ.get("ONLY_ORIGINAL", "1") == "1"
 
-# Meme-Frequenz / Auto Meme Mode
-AUTO_MEME_MODE         = os.environ.get("AUTO_MEME_MODE", "1") == "1"  # Dashboard: ON/OFF
-MEME_PROBABILITY       = float(os.environ.get("MEME_PROBABILITY", "0.3"))
+# Meme-Frequenz
+MEME_PROBABILITY      = float(os.environ.get("MEME_PROBABILITY", "0.3"))
+
+# Extra-Auto-Meme-Logik: wenn Tweet "nach Meme aussieht"
 AUTO_MEME_EXTRA_CHANCE = float(os.environ.get("AUTO_MEME_EXTRA_CHANCE", "0.5"))
 
-MEME_KEYWORDS = [
+# Auto Meme Mode (Dashboard Toggle)
+AUTO_MEME_MODE = os.environ.get("AUTO_MEME_MODE", "1") == "1"
+
+# Smart-Meme-Keywords (für Boost-Logik)
+MEME_KEYWORDS_SOFT = [
     "lfg",
     "wagmi",
     "ngmi",
@@ -63,7 +68,25 @@ MEME_KEYWORDS = [
     "haha",
     "😂",
     "🤣",
+]
+
+MEME_KEYWORDS_HARD = [
     "meme",
+    "memes",
+    "gif",
+    "pic",
+    "picture",
+    "image",
+    "sticker",
+    "reaction",
+    "template",
+]
+
+MEME_KEYWORDS_LENNY = [
+    "lenny",
+    "lennyface",
+    "$lenny",
+    # bewusst OHNE reines "( ͡° ͜ʖ ͡°)", sonst würde er ZU oft triggern
 ]
 
 # Feature-Toggles (für Dashboard / Commands)
@@ -327,34 +350,68 @@ def personalize_reply(base_text: str, user_id: str) -> str:
 
 
 # =========================
-# Meme-Entscheidungs-Logik (Smart Meme Boost B)
+# Meme-Entscheidungs-Logik (Smart Boost)
 # =========================
-def looks_like_meme_tweet(text: str) -> bool:
-    """Checkt, ob der Inhalt nach Meme / degen Tweet aussieht."""
-    t = (text or "").lower()
-    for kw in MEME_KEYWORDS:
-        if kw.lower() in t:
-            return True
-    return False
-
-
-def should_attach_meme(text: str) -> bool:
+def _meme_boost_score(text: str) -> float:
     """
-    Smart Meme Boost:
-    - Respektiert AUTO_MEME_MODE (Dashboard ON/OFF)
-    - Basis-Chance über MEME_PROBABILITY
-    - Extra-Chance, wenn der Tweet „meme-ig“ aussieht (Keywords / Emojis)
+    Gibt einen kleinen Score zurück, je nachdem wie 'memeig' der Text ist.
+    Der Score wird später auf die Basis-Meme-Wahrscheinlichkeit draufgeschlagen.
+    """
+    t = (text or "").lower()
+    score = 0.0
+
+    # Soft Degen Keywords → kleiner Bonus
+    if any(kw in t for kw in MEME_KEYWORDS_SOFT):
+        score += 0.15  # +15%
+
+    # Harte Meme-Keywords → stärkerer Bonus
+    if any(kw in t for kw in MEME_KEYWORDS_HARD):
+        score += 0.25  # +25%
+
+    # Lenny-spezifische Meme-Keywords → noch mal Bonus
+    if any(kw in t for kw in MEME_KEYWORDS_LENNY):
+        score += 0.20  # +20%
+
+    # Cap, damit es nicht völlig eskaliert
+    if score > 0.6:
+        score = 0.6
+
+    return score
+
+
+def should_attach_meme(text: str, is_mention: bool = False) -> bool:
+    """
+    Entscheidet, ob ein Meme angehängt wird.
+
+    - Respektiert AUTO_MEME_MODE (Dashboard Toggle)
+    - Basis: MEME_PROBABILITY
+    - Smart-Boost je nach Keywords im Text
+    - Mentions bekommen leicht höhere Chance als KOL-Tweets
     """
     if not AUTO_MEME_MODE:
         return False
 
-    # Basis-Chance
-    base_hit = (random.random() < MEME_PROBABILITY)
+    # Basis-Wahrscheinlichkeit aus ENV
+    try:
+        base_prob = float(MEME_PROBABILITY)
+    except Exception:
+        base_prob = 0.3
 
-    # Extra-Booster, wenn der Tweet nach Meme klingt
-    keyword_hit = looks_like_meme_tweet(text) and (random.random() < AUTO_MEME_EXTRA_CHANCE)
+    # Smart-Boost
+    boost = _meme_boost_score(text)
 
-    return base_hit or keyword_hit
+    # Mentions dürfen etwas mehr Meme-Power haben
+    if is_mention:
+        boost += float(AUTO_MEME_EXTRA_CHANCE) * 0.5
+
+    prob = base_prob + boost
+
+    # Sicherheits-Cap
+    if prob > 0.95:
+        prob = 0.95
+
+    # Finale Entscheidung
+    return random.random() < prob
 
 
 
@@ -1005,7 +1062,8 @@ def main():
                     text = personalize_reply(text, author_id_str)
 
                     # Meme-Entscheidung (smart)
-                    with_meme = should_attach_meme(src)
+                    with_meme = should_attach_meme(src, is_mention=True)
+
 
                     try:
                         post_reply(text, tid, with_meme)
@@ -1072,8 +1130,8 @@ def main():
                     src_text = tw.text or ""
                     text = build_reply_text(src_text)
 
-                    # Smart Meme Boost für KOL-Tweets
-                    with_meme = should_attach_meme(src_text)
+                    # Smart Meme Boost (für KOL-Tweets → is_mention=False)
+                    with_meme = should_attach_meme(src_text, is_mention=False)
 
 
                     try:
