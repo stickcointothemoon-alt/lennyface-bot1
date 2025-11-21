@@ -1361,8 +1361,11 @@ def main():
                     src_lower = src.lower()
                     cmd_used = None  # für User-Memory
 
+                    # DEBUG: Command-Detection loggen
+                    log.info("Command detection for mention %s: %s", tid, src_lower)
+
                     # 1) HELP
-                    if "help" in src_lower:
+                    if "help" in src_lower and "mc" not in src_lower and "vs" not in src_lower:
                         if not ENABLE_HELP:
                             log.info("help command ignored (disabled)")
                             remember_and_maybe_backup(tid)
@@ -1379,7 +1382,7 @@ def main():
                         text = build_lore_reply()
                         cmd_used = "lore"
 
-                    # 3) MC COMPARE (z.B. "mc lenny vs troll", "compare lenny troll")
+                    # 3) MC COMPARE (z.B. "mc lenny vs troll", "compare lenny vs troll")
                     elif "vs" in src_lower and any(
                         k in src_lower for k in ["mc", "market cap", "compare"]
                     ):
@@ -1387,6 +1390,7 @@ def main():
                             log.info("mc compare command ignored (stats disabled)")
                             remember_and_maybe_backup(tid)
                             continue
+                        log.info("Using MC_COMPARE for: %s", src_lower)
                         text = build_mc_compare_reply(src)
                         cmd_used = "mc_compare"
 
@@ -1433,6 +1437,12 @@ def main():
                     else:
                         text = build_reply_text(src)
                         cmd_used = "shill"
+
+                    # SAFETY: falls irgendeine Funktion None zurückgibt
+                    if not text:
+                        log.warning("Empty text from command '%s', using fallback.", cmd_used)
+                        text = "My brain just lagged, degen. Try again in a sec. ( ͡° ͜ʖ ͡°)"
+
 
 
                     # >>> HIER NEU: LennyFace einbauen
