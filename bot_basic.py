@@ -946,7 +946,7 @@ def build_mc_compare_reply(src: str) -> str:
             base_key = right_key
             other_key = left_key
         else:
-            # Kein Lenny gefunden → wir nehmen Len als Basis, andere als Vergleich
+            # Kein Lenny gefunden → wir nehmen Lenny als Basis, andere als Vergleich
             base_key = "lenny"
             other_key = right_key
 
@@ -994,7 +994,6 @@ def build_mc_compare_reply(src: str) -> str:
         )
 
     # Wir wollen: Wie oft größer ist other vs base?
-    # Beispiel: base = LENNY, other = TROLL
     factor = other_mc / base_mc
 
     base_label = base_info["symbol"]
