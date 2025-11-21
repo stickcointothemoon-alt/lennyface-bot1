@@ -394,7 +394,8 @@ def _meme_boost_score(text: str) -> float:
     return score
 
 
-def should_attach_meme(src: str) -> bool:
+   def should_attach_meme(src: str, is_mention: bool = False) -> bool:
+
     """
     Smart Meme Boost (Variante B)
     - Respektiert AUTO_MEME_MODE (Dashboard)
