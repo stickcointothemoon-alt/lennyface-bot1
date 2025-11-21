@@ -89,6 +89,103 @@ MEME_KEYWORDS_LENNY = [
     # bewusst OHNE reines "( ͡° ͜ʖ ͡°)", sonst würde er ZU oft triggern
 ]
 
+# ================================
+# LENNY FACE LIBRARY
+# ================================
+
+LENNY_BASE_FACES = [
+    "( ͡° ͜ʖ ͡°)",
+    "( ͡° ʖ̯ ͡°)",
+    "( ͡° ͜ʖ ͡°)ﾉ",
+    "( ͡° ͜ʖ ͡°)>⌐■-■",
+]
+
+LENNY_HYPE_FACES = [
+    "( ͡° ͜ʖ ͡°)🚀",
+    "( ͡🔥 ͜ʖ ͡🔥)",
+    "( ͡$ ͜ʖ ͡$)",
+    "( ͡° ͜ʖ ͡°)✨",
+]
+
+LENNY_SAD_FACES = [
+    "( ͡ಥ ͜ʖ ͡ಥ)",
+    "( ͡☉ ʖ̯ ͡☉)",
+    "( ͡° ʖ̯ ͡°)💔",
+]
+
+LENNY_COPE_FACES = [
+    "( ͡⚆ ͜ʖ ͡⚆)",
+    "( ͡ಠ ʖ̯ ͡ಠ)",
+    "( ͡⚆ ͜ʖ ͡⚆)💊",
+]
+
+# Saison-Faces – erstmal Platzhalter, später ausbauen
+LENNY_XMAS_FACES = [
+    "( ͡° ͜ʖ ͡°)🎄",
+    "( ͡° ͜ʖ ͡°)🎅",
+]
+
+LENNY_EASTER_FACES = [
+    "( ͡° ͜ʖ ͡°)🥕",
+    "( ͡° ͜ʖ ͡°)🐣",
+]
+
+
+def pick_lenny_face(mood: str = "base") -> str:
+    """Gibt ein Lennyface je nach 'mood' zurück."""
+    pools = {
+        "base":   LENNY_BASE_FACES,
+        "hype":   LENNY_HYPE_FACES,
+        "sad":    LENNY_SAD_FACES,
+        "cope":   LENNY_COPE_FACES,
+        "xmas":   LENNY_XMAS_FACES,
+        "easter": LENNY_EASTER_FACES,
+    }
+    pool = pools.get(mood, LENNY_BASE_FACES)
+    if not pool:
+        pool = LENNY_BASE_FACES
+    return random.choice(pool)
+
+
+def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
+    """
+    Hängt ein passendes Lennyface an den Reply an – abhängig vom Command.
+    Fügt NICHTs hinzu, wenn schon ein Lennyface im Text ist.
+    """
+    if not text:
+        return text
+
+    # Wenn schon irgendein ( ͡ im Text ist, nichts doppelt reinhauen
+    if "( ͡" in text:
+        return text
+
+    mood = "base"
+
+    if cmd_used in ("gm", "alpha"):
+        mood = "hype"
+    elif cmd_used == "roast":
+        mood = "cope"
+    elif cmd_used == "price":
+        # Simple Heuristik: wenn Dump-Wörter → sad
+        lower = text.lower()
+        if any(k in lower for k in ["dump", "down", "red", "-%"]):
+            mood = "sad"
+        else:
+            mood = "hype"
+    elif cmd_used == "shill":
+        # Shill kann base oder hype sein
+        mood = random.choice(["base", "hype"])
+    else:
+        mood = "base"
+
+    face = pick_lenny_face(mood)
+
+    # Schön ans Ende anhängen
+    if text.endswith(("!", "?", ".")):
+        return text + " " + face
+    return text + " " + face
+
+
 # Feature-Toggles (für Dashboard / Commands)
 ENABLE_HELP   = os.environ.get("ENABLE_HELP", "1") == "1"
 ENABLE_LORE   = os.environ.get("ENABLE_LORE", "1") == "1"
@@ -1086,6 +1183,10 @@ def main():
                     else:
                         text = build_reply_text(src)
                         cmd_used = "shill"
+
+                    # >>> HIER NEU: LennyFace einbauen
+                    text = decorate_with_lenny_face(text, cmd_used)
+                    # <<< ENDE NEU
 
                     # User-Memory updaten
                     update_user_profile(author_id_str, cmd_used)
