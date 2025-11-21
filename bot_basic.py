@@ -817,25 +817,33 @@ def _format_usd_short(n: float) -> str:
     return f"{n:.2f}"
 
 
-def _fetch_token_stats_for_compare(ca: str, override_url: str | None = None) -> dict | None:
+def _fetch_token_stats_for_compare(ca: str) -> dict | None:
     """
-    Holt MC / Vol für ein beliebiges Token via Dexscreener.
-    Wird für $LENNY und Vergleichstoken benutzt.
+    Holt MC / Vol für ein beliebiges Token via Dexscreener-API.
+    Wichtig: nutzt IMMER den JSON-Endpoint /latest/dex/tokens/{ca}
+    und NICHT die normale HTML-URL.
     """
     if not ca:
         return None
 
-    if override_url:
-        url = override_url
-    else:
-        url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
+    url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
 
     try:
         r = requests.get(url, timeout=10)
-        r.raise_for_status()
+
+        if r.status_code != 200:
+            log.warning(
+                "Dexscreener compare HTTP %s for %s, body[:80]=%r",
+                r.status_code,
+                ca,
+                r.text[:80],
+            )
+            return None
+
         data = r.json() or {}
         pairs = data.get("pairs") or []
         if not pairs:
+            log.warning("Dexscreener compare: no pairs for %s", ca)
             return None
 
         p = pairs[0]
@@ -852,10 +860,20 @@ def _fetch_token_stats_for_compare(ca: str, override_url: str | None = None) -> 
             "mc": mc,
             "vol24": vol24,
             "dex": p.get("dexId", ""),
-            "url": p.get("url", override_url or ""),
+            "url": p.get("url", ""),
         }
     except Exception as e:
-        log.warning("Dexscreener compare failed for %s: %s", ca, e)
+        # extra Debug: ein bisschen Text mitloggen, falls API HTML zurückgibt
+        try:
+            body_preview = r.text[:80]
+        except Exception:
+            body_preview = "<?>"
+        log.warning(
+            "Dexscreener compare failed for %s: %s | body[:80]=%r",
+            ca,
+            e,
+            body_preview,
+        )
         return None
 
 
@@ -871,6 +889,7 @@ def _build_compare_registry() -> dict:
         reg["lenny"] = {
             "symbol": "$LENNY",
             "ca": LENNY_TOKEN_CA,
+            # URL nur für den finalen Link, NICHT für die API-Calls
             "url": DEX_TOKEN_URL or "",
         }
         # Optional: alias lennyface
@@ -911,7 +930,7 @@ def build_mc_compare_reply(src: str) -> str:
     """
     Baut eine Antwort im Stil:
     'mc lenny vs troll' → vergleicht MC von $LENNY und $TROLL.
-    Nutzt COMPARE_REGISTRY und Dexscreener.
+    Nutzt COMPARE_REGISTRY und Dexscreener-API.
     """
     text_lower = src.lower()
     reg = COMPARE_REGISTRY
@@ -946,7 +965,7 @@ def build_mc_compare_reply(src: str) -> str:
             base_key = right_key
             other_key = left_key
         else:
-            # Kein Lenny gefunden → wir nehmen Lenny als Basis, andere als Vergleich
+            # Kein Lenny gefunden → wir nehmen LENNY als Basis, andere als Vergleich
             base_key = "lenny"
             other_key = right_key
 
@@ -974,9 +993,9 @@ def build_mc_compare_reply(src: str) -> str:
     base_info = reg[base_key]
     other_info = reg[other_key]
 
-    # Stats holen
-    base_stats = _fetch_token_stats_for_compare(base_info["ca"], base_info.get("url") or None)
-    other_stats = _fetch_token_stats_for_compare(other_info["ca"], other_info.get("url") or None)
+    # Stats holen – jetzt IMMER über die API (nur CA)
+    base_stats = _fetch_token_stats_for_compare(base_info["ca"])
+    other_stats = _fetch_token_stats_for_compare(other_info["ca"])
 
     if not base_stats or not other_stats:
         return (
@@ -1024,11 +1043,14 @@ def build_mc_compare_reply(src: str) -> str:
             f"Das sind ca. {inv:.1f}x größer. Wer ist jetzt der Meme-King, hm? ( ͡$ ͜ʖ ͡$)"
         )
 
-    # Dex-Link optional anhängen (von base)
-    if base_stats.get("url"):
-        txt += f" {base_stats['url']}"
+    # Dex-Link optional anhängen – hier nehmen wir die URL aus dem Registry-Eintrag,
+    # NICHT aus der API (die haben wir nur zum Rechnen benutzt).
+    base_link = base_info.get("url") or base_stats.get("url")
+    if base_link:
+        txt += f" {base_link}"
 
     return txt
+
 
 
     # -------- Mit Grok --------
