@@ -226,6 +226,12 @@ GROK_EXTRA_PROMPT       = os.environ.get("GROK_EXTRA_PROMPT", "")            # e
 LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
 DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 
+# --- MC Compare Settings (weitere Tokens) ---
+COMPARE_TOKEN_1_NAME = os.environ.get("COMPARE_TOKEN_1_NAME", "").strip()
+COMPARE_TOKEN_1_CA   = os.environ.get("COMPARE_TOKEN_1_CA", "").strip()
+COMPARE_TOKEN_1_URL  = os.environ.get("COMPARE_TOKEN_1_URL", "").strip()
+
+
 # Heroku-Config schreiben (für STATE_SEEN_IDS Backup)
 HEROKU_API_KEY  = os.environ.get("HEROKU_API_KEY","")
 HEROKU_APP_NAME = os.environ.get("HEROKU_APP_NAME","")
@@ -791,6 +797,241 @@ def build_market_reply(context_snippet: str = "") -> str:
         "#Lenny #Solana #Memecoins"
     )
 
+
+# =====================================
+# MC COMPARE – Hilfsfunktionen
+# =====================================
+
+def _format_usd_short(n: float) -> str:
+    """Kurzformat für USD Zahlen (MC etc)."""
+    try:
+        n = float(n)
+    except Exception:
+        return str(n)
+    if n >= 1_000_000_000:
+        return f"{n/1_000_000_000:.2f}B"
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.2f}M"
+    if n >= 1_000:
+        return f"{n/1_000:.2f}K"
+    return f"{n:.2f}"
+
+
+def _fetch_token_stats_for_compare(ca: str, override_url: str | None = None) -> dict | None:
+    """
+    Holt MC / Vol für ein beliebiges Token via Dexscreener.
+    Wird für $LENNY und Vergleichstoken benutzt.
+    """
+    if not ca:
+        return None
+
+    if override_url:
+        url = override_url
+    else:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
+
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json() or {}
+        pairs = data.get("pairs") or []
+        if not pairs:
+            return None
+
+        p = pairs[0]
+        price = float(p.get("priceUsd") or 0)
+        mc    = float(p.get("fdv") or p.get("marketCap") or 0)
+        vol24 = float(
+            (p.get("volume") or {}).get("h24")
+            or p.get("volume24h")
+            or 0
+        )
+
+        return {
+            "price": price,
+            "mc": mc,
+            "vol24": vol24,
+            "dex": p.get("dexId", ""),
+            "url": p.get("url", override_url or ""),
+        }
+    except Exception as e:
+        log.warning("Dexscreener compare failed for %s: %s", ca, e)
+        return None
+
+
+def _build_compare_registry() -> dict:
+    """
+    Registry aller Tokens, die der Bot für MC-Vergleiche kennt.
+    Key = normalized Name (lowercase, ohne $), Value = dict mit Infos.
+    """
+    reg = {}
+
+    # $LENNY immer drin
+    if LENNY_TOKEN_CA:
+        reg["lenny"] = {
+            "symbol": "$LENNY",
+            "ca": LENNY_TOKEN_CA,
+            "url": DEX_TOKEN_URL or "",
+        }
+        # Optional: alias lennyface
+        reg["lennyface"] = reg["lenny"]
+
+    # COMPARE_TOKEN_1_* aus ENV
+    if COMPARE_TOKEN_1_NAME and COMPARE_TOKEN_1_CA:
+        key = COMPARE_TOKEN_1_NAME.lower().lstrip("$")
+        reg[key] = {
+            "symbol": f"${COMPARE_TOKEN_1_NAME.upper().lstrip('$')}",
+            "ca": COMPARE_TOKEN_1_CA,
+            "url": COMPARE_TOKEN_1_URL,
+        }
+
+    # 🔮 Später: COMPARE_TOKEN_2_*, COMPARE_TOKEN_3_* hier ergänzen
+
+    return reg
+
+
+COMPARE_REGISTRY = _build_compare_registry()
+
+
+def _extract_compare_keyword(part: str) -> str | None:
+    """
+    Versucht aus einem Text-Teil (links/rechts von 'vs') ein Token rauszulesen.
+    Nimmt erstes 'Wort' aus Buchstaben/Zahlen/$.
+    """
+    part = part.lower()
+    candidates = re.findall(r"[a-z0-9$]{2,15}", part)
+    for c in candidates:
+        c = c.strip().lstrip("$")
+        if len(c) >= 2:
+            return c
+    return None
+
+
+def build_mc_compare_reply(src: str) -> str:
+    """
+    Baut eine Antwort im Stil:
+    'mc lenny vs troll' → vergleicht MC von $LENNY und $TROLL.
+    Nutzt COMPARE_REGISTRY und Dexscreener.
+    """
+    text_lower = src.lower()
+    reg = COMPARE_REGISTRY
+
+    if "vs" not in text_lower:
+        # Fallback: kein 'vs' gefunden → Standard-Marktantwort
+        return build_market_reply(src)
+
+    left, right = text_lower.split("vs", 1)
+    left = left.strip()
+    right = right.strip()
+
+    left_key = _extract_compare_keyword(left) or "lenny"
+    right_key = _extract_compare_keyword(right)
+
+    # Sicherstellen, dass wir 2 verschiedene haben:
+    if not right_key:
+        # Wenn nur 1 Token erkannt → treat as "LENNY vs <that>"
+        if left_key in ("lenny", "lennyface"):
+            # Nur Lenny gefunden → Standard-Stats
+            return build_market_reply(src)
+        else:
+            # Lenny als Basis, anderer als Vergleich
+            base_key = "lenny"
+            other_key = left_key
+    else:
+        # Beide Seiten haben ein Keyword → herausfinden, wo Lenny ist
+        if left_key in ("lenny", "lennyface"):
+            base_key = left_key
+            other_key = right_key
+        elif right_key in ("lenny", "lennyface"):
+            base_key = right_key
+            other_key = left_key
+        else:
+            # Kein Lenny gefunden → wir nehmen Len als Basis, andere als Vergleich
+            base_key = "lenny"
+            other_key = right_key
+
+    base_key = base_key.lstrip("$")
+    other_key = other_key.lstrip("$")
+
+    if base_key not in reg:
+        base_key = "lenny"  # Fallback
+
+    if other_key not in reg:
+        # Token nicht konfiguriert
+        known_others = [k for k in reg.keys() if k not in ("lenny", "lennyface")]
+        if known_others:
+            known_str = ", ".join(sorted({reg[k]["symbol"] for k in known_others}))
+            return (
+                f"I can only compare $LENNY with configured tokens right now. "
+                f"Known: {known_str}. Set COMPARE_TOKEN_1_* in config for more. ( ͡° ͜ʖ ͡°)"
+            )
+        else:
+            return (
+                "Right now I only know $LENNY for MC compare. "
+                "Add COMPARE_TOKEN_1_NAME / CA in config to compare with other coins. ( ͡° ͜ʖ ͡°)"
+            )
+
+    base_info = reg[base_key]
+    other_info = reg[other_key]
+
+    # Stats holen
+    base_stats = _fetch_token_stats_for_compare(base_info["ca"], base_info.get("url") or None)
+    other_stats = _fetch_token_stats_for_compare(other_info["ca"], other_info.get("url") or None)
+
+    if not base_stats or not other_stats:
+        return (
+            "Dexscreener didn’t send me enough data to compare MCs right now. "
+            "Try again in a minute, degen. ( ͡° ͜ʖ ͡°)"
+        )
+
+    base_mc = base_stats["mc"] or 0
+    other_mc = other_stats["mc"] or 0
+
+    if base_mc <= 0 or other_mc <= 0:
+        return (
+            "One of those MCs looks like zero on Dexscreener. "
+            "Hard to compare that, ngl. ( ͡⚆ ͜ʖ ͡⚆)"
+        )
+
+    # Wir wollen: Wie oft größer ist other vs base?
+    # Beispiel: base = LENNY, other = TROLL
+    factor = other_mc / base_mc
+
+    base_label = base_info["symbol"]
+    other_label = other_info["symbol"]
+
+    base_mc_str = _format_usd_short(base_mc)
+    other_mc_str = _format_usd_short(other_mc)
+
+    log.info(
+        "MC Compare: %s (%s) ~ %s MC vs %s (%s) ~ %s MC → factor=%.2fx",
+        base_label, base_info["ca"], base_mc_str,
+        other_label, other_info["ca"], other_mc_str,
+        factor,
+    )
+
+    if factor >= 1:
+        # Other ist größer
+        txt = (
+            f"{other_label} sitzt aktuell bei ~{other_mc_str} MC, "
+            f"{base_label} bei ~{base_mc_str}. Das sind nur ca. {factor:.1f}x Unterschied. "
+            f"Kein unmöglicher degen stretch – wenn die smirk-power durchzieht. ( ͡° ͜ʖ ͡°)"
+        )
+    else:
+        # LENNY (oder Base) ist größer
+        inv = 1 / factor
+        txt = (
+            f"{base_label} ist schon ahead: ~{base_mc_str} MC vs {other_label} mit ~{other_mc_str}. "
+            f"Das sind ca. {inv:.1f}x größer. Wer ist jetzt der Meme-King, hm? ( ͡$ ͜ʖ ͡$)"
+        )
+
+    # Dex-Link optional anhängen (von base)
+    if base_stats.get("url"):
+        txt += f" {base_stats['url']}"
+
+    return txt
+
+
     # -------- Mit Grok --------
     if GROK_API_KEY:
         ctx = f"User message: {context_snippet[:140]}. Market Cap: {mc_str}."
@@ -1034,9 +1275,7 @@ def build_roast_reply(context_snippet: str = "") -> str:
     ]
     return random.choice(templates)
 
-# =========================
-# Main Loop
-# =========================
+
 # =========================
 # Main Loop
 # =========================
@@ -1074,7 +1313,7 @@ def main():
                 day_marker = today
                 replies_today = {uid: 0 for uid in TARGET_IDS}
 
-                        # 1) Mentions beantworten (Bot wird angepingt)
+            # 1) Mentions beantworten (Bot wird angepingt)
             ments = fetch_mentions(my_user_id, since_id=last_mention_since)
             if ments:
                 log.info("Mentions fetched: %d", len(ments))
@@ -1140,7 +1379,18 @@ def main():
                         text = build_lore_reply()
                         cmd_used = "lore"
 
-                    # 3) PRICE / MC / STATS / VOLUME / CHART
+                    # 3) MC COMPARE (z.B. "mc lenny vs troll", "compare lenny troll")
+                    elif "vs" in src_lower and any(
+                        k in src_lower for k in ["mc", "market cap", "compare"]
+                    ):
+                        if not ENABLE_STATS:
+                            log.info("mc compare command ignored (stats disabled)")
+                            remember_and_maybe_backup(tid)
+                            continue
+                        text = build_mc_compare_reply(src)
+                        cmd_used = "mc_compare"
+
+                    # 4) PRICE / MC / STATS / VOLUME / CHART (Standard)
                     elif any(k in src_lower for k in [
                         "price", " mc", "market cap", "marketcap",
                         "volume", "vol ", "stats", "chart"
@@ -1152,7 +1402,7 @@ def main():
                         text = build_market_reply(src)
                         cmd_used = "price"
 
-                    # 4) ALPHA
+                    # 5) ALPHA
                     elif "alpha" in src_lower:
                         if not ENABLE_ALPHA:
                             log.info("alpha command ignored (disabled)")
@@ -1161,7 +1411,7 @@ def main():
                         text = build_alpha_reply(src)
                         cmd_used = "alpha"
 
-                    # 5) GM
+                    # 6) GM
                     elif src_lower.startswith("gm") or " gm" in src_lower:
                         if not ENABLE_GM:
                             log.info("gm command ignored (disabled)")
@@ -1170,7 +1420,7 @@ def main():
                         text = build_gm_reply(src)
                         cmd_used = "gm"
 
-                    # 6) ROAST
+                    # 7) ROAST
                     elif "roast me" in src_lower or " roast" in src_lower:
                         if not ENABLE_ROAST:
                             log.info("roast command ignored (disabled)")
@@ -1179,10 +1429,11 @@ def main():
                         text = build_roast_reply(src)
                         cmd_used = "roast"
 
-                    # 7) Default-Shill
+                    # 8) Default-Shill
                     else:
                         text = build_reply_text(src)
                         cmd_used = "shill"
+
 
                     # >>> HIER NEU: LennyFace einbauen
                     text = decorate_with_lenny_face(text, cmd_used)
