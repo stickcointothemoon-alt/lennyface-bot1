@@ -1029,19 +1029,20 @@ def build_mc_compare_reply(src: str) -> str:
     )
 
     if factor >= 1:
-        # Other ist größer
-        txt = (
-            f"{other_label} sitzt aktuell bei ~{other_mc_str} MC, "
-            f"{base_label} bei ~{base_mc_str}. Das sind nur ca. {factor:.1f}x Unterschied. "
-            f"Kein unmöglicher degen stretch – wenn die smirk-power durchzieht. ( ͡° ͜ʖ ͡°)"
-        )
-    else:
-        # LENNY (oder Base) ist größer
-        inv = 1 / factor
-        txt = (
-            f"{base_label} ist schon ahead: ~{base_mc_str} MC vs {other_label} mit ~{other_mc_str}. "
-            f"Das sind ca. {inv:.1f}x größer. Wer ist jetzt der Meme-King, hm? ( ͡$ ͜ʖ ͡$)"
-        )
+    # Other is bigger
+    txt = (
+        f"{other_label} is sitting at ~{other_mc_str} MC, "
+        f"while {base_label} is around ~{base_mc_str}. That’s only about {factor:.1f}x difference. "
+        f"Not a crazy degen stretch if the smirk-power kicks in. ( ͡° ͜ʖ ͡°)"
+    )
+else:
+    # LENNY (or base) is bigger
+    inv = 1 / factor
+    txt = (
+        f"{base_label} is already ahead: ~{base_mc_str} MC vs {other_label} at ~{other_mc_str}. "
+        f"That’s roughly {inv:.1f}x bigger. Who’s the real meme king now, huh? ( ͡$ ͜ʖ ͡$)"
+    )
+
 
     # Dex-Link optional anhängen – hier nehmen wir die URL aus dem Registry-Eintrag,
     # NICHT aus der API (die haben wir nur zum Rechnen benutzt).
