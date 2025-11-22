@@ -817,33 +817,25 @@ def _format_usd_short(n: float) -> str:
     return f"{n:.2f}"
 
 
-def _fetch_token_stats_for_compare(ca: str) -> dict | None:
+def _fetch_token_stats_for_compare(ca: str, override_url: str | None = None) -> dict | None:
     """
-    Holt MC / Vol für ein beliebiges Token via Dexscreener-API.
-    Wichtig: nutzt IMMER den JSON-Endpoint /latest/dex/tokens/{ca}
-    und NICHT die normale HTML-URL.
+    Holt MC / Vol für ein beliebiges Token via Dexscreener.
+    Wird für $LENNY und Vergleichstoken benutzt.
     """
     if not ca:
         return None
 
-    url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
+    if override_url:
+        url = override_url
+    else:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{ca}"
 
     try:
         r = requests.get(url, timeout=10)
-
-        if r.status_code != 200:
-            log.warning(
-                "Dexscreener compare HTTP %s for %s, body[:80]=%r",
-                r.status_code,
-                ca,
-                r.text[:80],
-            )
-            return None
-
+        r.raise_for_status()
         data = r.json() or {}
         pairs = data.get("pairs") or []
         if not pairs:
-            log.warning("Dexscreener compare: no pairs for %s", ca)
             return None
 
         p = pairs[0]
@@ -860,22 +852,60 @@ def _fetch_token_stats_for_compare(ca: str) -> dict | None:
             "mc": mc,
             "vol24": vol24,
             "dex": p.get("dexId", ""),
-            "url": p.get("url", ""),
+            "url": p.get("url", override_url or ""),
         }
     except Exception as e:
-        # extra Debug: ein bisschen Text mitloggen, falls API HTML zurückgibt
-        try:
-            body_preview = r.text[:80]
-        except Exception:
-            body_preview = "<?>"
-        log.warning(
-            "Dexscreener compare failed for %s: %s | body[:80]=%r",
-            ca,
-            e,
-            body_preview,
-        )
+        log.warning("Dexscreener compare failed for %s: %s", ca, e)
         return None
 
+
+def _build_compare_registry() -> dict:
+    """
+    Registry aller Tokens, die der Bot für MC-Vergleiche kennt.
+    Key = normalized Name (lowercase, ohne $), Value = dict mit Infos.
+    """
+    reg = {}
+
+    # $LENNY immer drin
+    if LENNY_TOKEN_CA:
+        reg["lenny"] = {
+            "symbol": "$LENNY",
+            "ca": LENNY_TOKEN_CA,
+            "url": DEX_TOKEN_URL or "",
+        }
+        # Optional: alias lennyface
+        reg["lennyface"] = reg["lenny"]
+
+    # COMPARE_TOKEN_1_* aus ENV
+    if COMPARE_TOKEN_1_NAME and COMPARE_TOKEN_1_CA:
+        key = COMPARE_TOKEN_1_NAME.lower().lstrip("$")
+        reg[key] = {
+            "symbol": f"${COMPARE_TOKEN_1_NAME.upper().lstrip('$')}",
+            "ca": COMPARE_TOKEN_1_CA,
+            "url": COMPARE_TOKEN_1_URL,
+        }
+
+    # 🔮 Später: COMPARE_TOKEN_2_*, COMPARE_TOKEN_3_* hier ergänzen
+
+    return reg
+
+
+# 👉 Muss VOR build_mc_compare_reply definiert werden
+COMPARE_REGISTRY = _build_compare_registry()
+
+
+def _extract_compare_keyword(part: str) -> str | None:
+    """
+    Versucht aus einem Text-Teil (links/rechts von 'vs') ein Token rauszulesen.
+    Nimmt erstes 'Wort' aus Buchstaben/Zahlen/$.
+    """
+    part = part.lower()
+    candidates = re.findall(r"[a-z0-9$]{2,15}", part)
+    for c in candidates:
+        c = c.strip().lstrip("$")
+        if len(c) >= 2:
+            return c
+    return None
 
 def build_mc_compare_reply(src: str) -> str:
     """
@@ -984,7 +1014,7 @@ def build_mc_compare_reply(src: str) -> str:
         # Other is bigger
         txt = (
             f"{other_label} is sitting at ~{other_mc_str} MC, "
-            f"while {base_label} is around ~{base_mc_str}. That’s only about {factor:.1f}x difference. "
+            f"while {base_label} is around ~{base_mc_str}. That’s only about {factor:.1f}x      difference. "
             f"Not a crazy degen stretch if the smirk-power kicks in. ( ͡° ͜ʖ ͡°)"
         )
     else:
