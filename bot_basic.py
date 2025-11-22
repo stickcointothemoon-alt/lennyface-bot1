@@ -1023,15 +1023,14 @@ def _extract_compare_keyword(part: str) -> str | None:
 
 def build_mc_compare_reply(src: str) -> str:
     """
-    Baut eine Antwort im Stil:
-    'mc lenny vs troll' → vergleicht MC von $LENNY und $TROLL.
-    Nutzt COMPARE_REGISTRY und Dexscreener.
+    'lenny vs troll' / 'mc lenny vs troll' → vergleicht MC von $LENNY und z.B. $TROLL.
+    Nutzt COMPARE_REGISTRY + Dexscreener + optional Grok für spicy Text.
     """
     text_lower = src.lower()
     reg = COMPARE_REGISTRY
 
+    # Ohne "vs" → ganz normaler Market-Reply
     if "vs" not in text_lower:
-        # Fallback: kein 'vs' gefunden → Standard-Marktantwort
         return build_market_reply(src)
 
     left, right = text_lower.split("vs", 1)
@@ -1043,12 +1042,10 @@ def build_mc_compare_reply(src: str) -> str:
 
     # Sicherstellen, dass wir 2 verschiedene haben:
     if not right_key:
-        # Wenn nur 1 Token erkannt → treat as "LENNY vs <that>"
+        # Nur ein Token gefunden → treat as "LENNY vs <that>"
         if left_key in ("lenny", "lennyface"):
-            # Nur Lenny gefunden → Standard-Stats
             return build_market_reply(src)
         else:
-            # Lenny als Basis, anderer als Vergleich
             base_key = "lenny"
             other_key = left_key
     else:
@@ -1060,7 +1057,7 @@ def build_mc_compare_reply(src: str) -> str:
             base_key = right_key
             other_key = left_key
         else:
-            # Kein Lenny gefunden → wir nehmen LENNY als Basis, andere als Vergleich
+            # Kein Lenny gefunden → nehmen wir Lenny als Basis, andere Seite als Vergleich
             base_key = "lenny"
             other_key = right_key
 
@@ -1107,8 +1104,7 @@ def build_mc_compare_reply(src: str) -> str:
             "Hard to compare that, ngl. ( ͡⚆ ͜ʖ ͡⚆)"
         )
 
-    # Wir wollen: Wie oft größer ist other vs base?
-    # Beispiel: base = LENNY, other = TROLL
+    # Wie oft größer ist other vs base?
     factor = other_mc / base_mc
 
     base_label = base_info["symbol"]
@@ -1124,74 +1120,76 @@ def build_mc_compare_reply(src: str) -> str:
         factor,
     )
 
+    # --- Neutraler Fallback-Text (falls Grok nicht benutzt werden kann) ---
     if factor >= 1:
-        # Other is bigger
-        txt = (
+        fallback_txt = (
             f"{other_label} is sitting at ~{other_mc_str} MC, "
-            f"while {base_label} is around ~{base_mc_str}. That’s only about {factor:.1f}x      difference. "
+            f"while {base_label} is around ~{base_mc_str}. "
+            f"That’s only about {factor:.1f}x difference. "
             f"Not a crazy degen stretch if the smirk-power kicks in. ( ͡° ͜ʖ ͡°)"
         )
     else:
-        # LENNY (or base) is bigger
         inv = 1 / factor
-        txt = (
+        fallback_txt = (
             f"{base_label} is already ahead: ~{base_mc_str} MC vs {other_label} at ~{other_mc_str}. "
             f"That’s roughly {inv:.1f}x bigger. Who’s the real meme king now, huh? ( ͡$ ͜ʖ ͡$)"
         )
 
-    # Dex-Link optional anhängen (von base)
+    # --- Grok-Spice oben drauf, wenn API-Key vorhanden ---
+    txt = fallback_txt
+    if GROK_API_KEY:
+        try:
+            # Ein bisschen Kontext: wer ist wer, wie groß ist der Faktor
+            ctx = (
+                f"Base token: {base_label} MC={base_mc_str}. "
+                f"Other token: {other_label} MC={other_mc_str}. "
+                f"Other/Base factor: {factor:.1f}x."
+            )
+
+            prompt = (
+                "You are LennyBot, a degen meme coin bot speaking to Crypto Twitter.\n"
+                "User asked to compare two tokens by Market Cap (MC).\n"
+                "Write ONE very short, spicy degen line about the MC difference.\n"
+                "- Use the factor to describe how far apart they are (x).\n"
+                "- Keep it under 200 characters.\n"
+                "- Include exactly one Lennyface like ( ͡° ͜ʖ ͡°) or ( ͡$ ͜ʖ ͡$).\n"
+                "- Do NOT include any URLs or @mentions.\n"
+                "- Feel free to joke if the gap is huge (e.g. 1000x+).\n"
+                f"Context: {ctx}"
+            )
+
+            grok_answer = grok_generate(prompt) or ""
+            grok_answer = grok_answer.strip()
+
+            # URLs raus
+            grok_answer = re.sub(r"https?://\S+", "", grok_answer)
+            # @handle raus
+            try:
+                pattern = re.compile(rf"@{re.escape(BOT_HANDLE)}", re.IGNORECASE)
+                grok_answer = pattern.sub("", grok_answer)
+            except Exception:
+                pass
+
+            grok_answer = re.sub(r"\s+", " ", grok_answer).strip()
+
+            if grok_answer:
+                txt = grok_answer
+
+        except Exception as e:
+            log.warning("Grok MC compare failed: %s", e)
+            # txt bleibt fallback_txt
+
+    # Dex-Link (von base) optional anhängen
     if base_stats.get("url"):
-        txt += f" {base_stats['url']}"
+        url_part = base_stats["url"].strip()
+        if url_part:
+            max_len = 280
+            reserved = len(url_part) + 1  # Leerzeichen + URL
+            if len(txt) + reserved > max_len:
+                txt = txt[: max_len - reserved].rstrip(" .,!-")
+            txt = f"{txt} {url_part}"
 
     return txt
-
-    # -------- Mit Grok --------
-    if GROK_API_KEY:
-        ctx = f"User message: {context_snippet[:140]}. Market Cap: {mc_str}."
-
-        prompt = (
-            "User asks about $LENNY Market Cap. "
-            "Write a VERY short, cheeky degen reply. "
-            "Use ONLY the Market Cap number. "
-            "DO NOT include any URLs or links. "
-            "Include ( ͡° ͜ʖ ͡°) and 1–2 crypto hashtags. "
-            f"Context: {ctx}"
-        )
-
-        base_txt = grok_generate(prompt) or fallback
-    else:
-        base_txt = fallback
-
-    # -------- Lennyface sicherstellen --------
-    if "( ͡° ͜ʖ ͡°)" not in base_txt:
-        base_txt += " ( ͡° ͜ʖ ͡°)"
-
-    # -------- URLs die Grok reinsneakt → entfernen --------
-    base_txt = re.sub(r"https?://\S+", "", base_txt).strip()
-
-    # -------- Falls Grok den Bot erwähnt → raus --------
-    try:
-        pattern = re.compile(rf"@{re.escape(BOT_HANDLE)}", re.IGNORECASE)
-        base_txt = pattern.sub("", base_txt)
-    except Exception:
-        pass
-
-    base_txt = re.sub(r"\s+", " ", base_txt).strip()
-
-    # -------- Dex-Link selbst anfügen --------
-    if pair_url:
-        max_len = 280
-        url_part = pair_url.strip()
-        reserved = len(url_part) + 1  # Leerzeichen + URL
-
-        if len(base_txt) + reserved > max_len:
-            base_txt = base_txt[: max_len - reserved].rstrip(" .,!-")
-
-        final_txt = f"{base_txt} {url_part}"
-    else:
-        final_txt = base_txt[:280]
-
-    return final_txt
 
 # =========================
 # Helfer: Tweets holen
@@ -1495,17 +1493,20 @@ def main():
                         text = build_lore_reply()
                         cmd_used = "lore"
 
-                    # 3) MC COMPARE (z.B. "mc lenny vs troll", "compare lenny vs troll")
-                    elif "vs" in src_lower and any(
-                        k in src_lower for k in ["mc", "market cap", "compare"]
-                    ):
-                        if not ENABLE_STATS:
-                            log.info("mc compare command ignored (stats disabled)")
-                            remember_and_maybe_backup(tid)
-                            continue
-                        log.info("Using MC_COMPARE for: %s", src_lower)
+                    # 3) MC COMPARE (z.B. "lenny vs troll", "bonk vs lenny", mit oder ohne 'mc')
+                    elif "vs" in src_lower and any(tok in src_lower for tok in [
+                        "lenny", "lennyface", "$lenny",
+                        "troll", "$troll",
+                        "bonk", "$bonk",
+                        "pepe", "$pepe",
+                        "wojak", "$wojak",
+                        "wif", "$wif",
+                        "btc", "bitcoin",
+                    ]):
+                        log.info("Using MC_COMPARE for: %s", src)
                         text = build_mc_compare_reply(src)
                         cmd_used = "mc_compare"
+
 
                     # 4) PRICE / MC / STATS / VOLUME / CHART (Standard)
                     elif any(k in src_lower for k in [
