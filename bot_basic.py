@@ -230,6 +230,10 @@ DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 COMPARE_TOKEN_1_NAME = os.environ.get("COMPARE_TOKEN_1_NAME", "").strip()
 COMPARE_TOKEN_1_CA   = os.environ.get("COMPARE_TOKEN_1_CA", "").strip()
 COMPARE_TOKEN_1_URL  = os.environ.get("COMPARE_TOKEN_1_URL", "").strip()
+COMPARE_TOKEN_6_NAME = os.environ.get("COMPARE_TOKEN_6_NAME", "").strip()
+COMPARE_TOKEN_6_CA   = os.environ.get("COMPARE_TOKEN_6_CA", "").strip()
+COMPARE_TOKEN_6_URL  = os.environ.get("COMPARE_TOKEN_6_URL", "").strip()
+
 
 
 # Heroku-Config schreiben (für STATE_SEEN_IDS Backup)
@@ -928,6 +932,16 @@ def _build_compare_registry() -> dict:
                 "symbol": f"${name.upper().lstrip('$')}",
                 "ca": ca,
                 "url": url,
+
+    # COMPARE_TOKEN_6_* aus ENV (BTC / Coingecko)
+    if COMPARE_TOKEN_6_NAME and COMPARE_TOKEN_6_CA:
+        key = COMPARE_TOKEN_6_NAME.lower().lstrip("$")
+        reg[key] = {
+            "symbol": f"${COMPARE_TOKEN_6_NAME.upper().lstrip('$')}",
+            "ca": COMPARE_TOKEN_6_CA,
+            "url": COMPARE_TOKEN_6_URL,
+        
+
             }
 
     return reg
