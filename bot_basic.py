@@ -1012,8 +1012,18 @@ def _extract_compare_keyword(part: str) -> str | None:
     """
     Versucht aus einem Text-Teil (links/rechts von 'vs') ein Token rauszulesen.
     Nimmt erstes 'Wort' aus Buchstaben/Zahlen/$.
+    Ignoriert dabei das eigene Bot-Handle (@lennyface_bot).
     """
     part = part.lower()
+
+    # Eigenes Handle rauswerfen, damit nicht "lennyface" erkannt wird
+    try:
+        handle = BOT_HANDLE.lower()
+        part = re.sub(rf"@{re.escape(handle)}\b", " ", part)
+    except Exception:
+        # Falls aus irgendeinem Grund BOT_HANDLE spinnt: lieber gar nichts machen als crashen
+        pass
+
     candidates = re.findall(r"[a-z0-9$]{2,15}", part)
     for c in candidates:
         c = c.strip().lstrip("$")
