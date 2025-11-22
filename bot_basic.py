@@ -1142,6 +1142,16 @@ def build_mc_compare_reply(src: str) -> str:
     base_label = base_info["symbol"]
     other_label = other_info["symbol"]
 
+    # Emoji an Token hängen (falls vorhanden)
+    base_emoji = TOKEN_EMOJIS.get(base_key, "")
+    other_emoji = TOKEN_EMOJIS.get(other_key, "")
+
+    if base_emoji:
+    base_label = f"{base_label} {base_emoji}"
+
+    if other_emoji:
+    other_label = f"{other_label} {other_emoji}"
+
     base_mc_str = _format_usd_short(base_mc)
     other_mc_str = _format_usd_short(other_mc)
 
@@ -1235,15 +1245,20 @@ def build_mc_compare_reply(src: str) -> str:
 
     # Dex-Link (von base) optional anhängen
     if base_stats.get("url"):
-        url_part = base_stats["url"].strip()
-        if url_part:
-            max_len = 280
-            reserved = len(url_part) + 1  # Leerzeichen + URL
-            if len(txt) + reserved > max_len:
-                txt = txt[: max_len - reserved].rstrip(" .,!-")
-            txt = f"{txt} {url_part}"
+    url_part = base_stats["url"].strip()
+    if url_part:
+        max_len = 280
+        reserved = len(url_part) + 1
+        if len(txt) + reserved > max_len:
+            txt = txt[: max_len - reserved].rstrip(" .,!-")
+        txt = f"{txt} {url_part}"
+
+    # FIX — keeps Twitter blue highlight for $tokens
+    txt = re.sub(r"\$([A-Za-z0-9]+)’s", r"$\1 is", txt)
+    txt = re.sub(r"\$([A-Za-z0-9]+)'s", r"$\1 is", txt)
 
     return txt
+
 
 # =========================
 # Helfer: Tweets holen
