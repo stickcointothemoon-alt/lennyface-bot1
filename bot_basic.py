@@ -226,14 +226,39 @@ GROK_EXTRA_PROMPT       = os.environ.get("GROK_EXTRA_PROMPT", "")            # e
 LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
 DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 
-# --- MC Compare Settings (weitere Tokens) ---
+# =====================================
+# MC_COMPARE – weitere Tokens aus ENV
+# =====================================
+
+# Token 1 (z.B. TROLL)
 COMPARE_TOKEN_1_NAME = os.environ.get("COMPARE_TOKEN_1_NAME", "").strip()
 COMPARE_TOKEN_1_CA   = os.environ.get("COMPARE_TOKEN_1_CA", "").strip()
 COMPARE_TOKEN_1_URL  = os.environ.get("COMPARE_TOKEN_1_URL", "").strip()
+
+# Token 2
+COMPARE_TOKEN_2_NAME = os.environ.get("COMPARE_TOKEN_2_NAME", "").strip()
+COMPARE_TOKEN_2_CA   = os.environ.get("COMPARE_TOKEN_2_CA", "").strip()
+COMPARE_TOKEN_2_URL  = os.environ.get("COMPARE_TOKEN_2_URL", "").strip()
+
+# Token 3
+COMPARE_TOKEN_3_NAME = os.environ.get("COMPARE_TOKEN_3_NAME", "").strip()
+COMPARE_TOKEN_3_CA   = os.environ.get("COMPARE_TOKEN_3_CA", "").strip()
+COMPARE_TOKEN_3_URL  = os.environ.get("COMPARE_TOKEN_3_URL", "").strip()
+
+# Token 4
+COMPARE_TOKEN_4_NAME = os.environ.get("COMPARE_TOKEN_4_NAME", "").strip()
+COMPARE_TOKEN_4_CA   = os.environ.get("COMPARE_TOKEN_4_CA", "").strip()
+COMPARE_TOKEN_4_URL  = os.environ.get("COMPARE_TOKEN_4_URL", "").strip()
+
+# Token 5
+COMPARE_TOKEN_5_NAME = os.environ.get("COMPARE_TOKEN_5_NAME", "").strip()
+COMPARE_TOKEN_5_CA   = os.environ.get("COMPARE_TOKEN_5_CA", "").strip()
+COMPARE_TOKEN_5_URL  = os.environ.get("COMPARE_TOKEN_5_URL", "").strip()
+
+# Token 6 (BTC – wir benutzen später Coingecko)
 COMPARE_TOKEN_6_NAME = os.environ.get("COMPARE_TOKEN_6_NAME", "").strip()
 COMPARE_TOKEN_6_CA   = os.environ.get("COMPARE_TOKEN_6_CA", "").strip()
 COMPARE_TOKEN_6_URL  = os.environ.get("COMPARE_TOKEN_6_URL", "").strip()
-
 
 
 # Heroku-Config schreiben (für STATE_SEEN_IDS Backup)
