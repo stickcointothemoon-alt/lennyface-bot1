@@ -1055,15 +1055,14 @@ def _emoji_for_key(key: str) -> str:
 
 def build_mc_compare_reply(src: str) -> str:
     """
-    'lenny vs troll' / 'mc lenny vs pepe' etc. →
-    vergleicht MC von $LENNY (oder Basis-Token) und anderem Token.
-    Nutzt COMPARE_REGISTRY und Dexscreener + optional Grok.
+    'lenny vs troll' / 'mc lenny vs troll' → vergleicht MC von $LENNY und z.B. $TROLL.
+    Nutzt COMPARE_REGISTRY + Dexscreener + optional Grok für spicy Text.
     """
     text_lower = src.lower()
     reg = COMPARE_REGISTRY
 
+    # Ohne "vs" → ganz normaler Market-Reply
     if "vs" not in text_lower:
-        # Fallback: kein 'vs' → normale Markt-Antwort
         return build_market_reply(src)
 
     left, right = text_lower.split("vs", 1)
@@ -1075,12 +1074,10 @@ def build_mc_compare_reply(src: str) -> str:
 
     # Sicherstellen, dass wir 2 verschiedene haben:
     if not right_key:
-        # Wenn nur 1 Token erkannt → treat as "LENNY vs <that>"
+        # Nur ein Token gefunden → treat as "LENNY vs <that>"
         if left_key in ("lenny", "lennyface"):
-            # Nur Lenny gefunden → Standard-Stats
             return build_market_reply(src)
         else:
-            # Lenny als Basis, anderer als Vergleich
             base_key = "lenny"
             other_key = left_key
     else:
@@ -1092,7 +1089,7 @@ def build_mc_compare_reply(src: str) -> str:
             base_key = right_key
             other_key = left_key
         else:
-            # Kein Lenny gefunden → wir nehmen LENNY als Basis, andere als Vergleich
+            # Kein Lenny gefunden → nehmen wir Lenny als Basis, andere Seite als Vergleich
             base_key = "lenny"
             other_key = right_key
 
@@ -1139,17 +1136,14 @@ def build_mc_compare_reply(src: str) -> str:
             "Hard to compare that, ngl. ( ͡⚆ ͜ʖ ͡⚆)"
         )
 
-    # Wie oft größer ist OTHER vs BASE? (normalerweise OTHER vs LENNY)
+    # Wie oft größer ist other vs base?
     factor = other_mc / base_mc
 
-    base_label = base_info["symbol"]    # z.B. $LENNY
-    other_label = other_info["symbol"]  # z.B. $TROLL
+    base_label = base_info["symbol"]
+    other_label = other_info["symbol"]
 
     base_mc_str = _format_usd_short(base_mc)
     other_mc_str = _format_usd_short(other_mc)
-
-    base_emoji = _emoji_for_key(base_key)
-    other_emoji = _emoji_for_key(other_key)
 
     log.info(
         "MC Compare: %s (%s) ~ %s MC vs %s (%s) ~ %s MC → factor=%.2fx",
@@ -1158,100 +1152,98 @@ def build_mc_compare_reply(src: str) -> str:
         factor,
     )
 
-    # -------- Faktor-basierte Personality --------
+    # --- Neutraler Fallback-Text (falls Grok nicht benutzt werden kann) ---
     if factor >= 1:
-        # Other hat größeren MC als Base
-        if factor < 20:
-            mood = "bullish"
-        elif factor < 200:
-            mood = "degen-possible"
-        elif factor < 1000:
-            mood = "galaxy-brain-stretch"
-        else:
-            mood = "cosmic-cope"
-    else:
-        # Base (oft $LENNY) ist größer → wir sind der Chad
-        inv = 1 / factor if factor > 0 else 0
-        if inv < 5:
-            mood = "light-chad"
-        elif inv < 50:
-            mood = "big-chad"
-        else:
-            mood = "overlord-chad"
-
-    # -------- Fallback-Text (ohne Grok) --------
-    if factor >= 1:
-        fallback = (
+        fallback_txt = (
             f"{other_label} is sitting at ~{other_mc_str} MC, "
-            f"while {base_label} is around ~{base_mc_str}. That’s about {factor:.1f}x difference. "
-            f"{mood} degen gap if the smirk-power kicks in. ( ͡° ͜ʖ ͡°)"
+            f"while {base_label} is around ~{base_mc_str}. "
+            f"That’s only about {factor:.1f}x difference. "
+            f"Not a crazy degen stretch if the smirk-power kicks in. ( ͡° ͜ʖ ͡°)"
         )
     else:
         inv = 1 / factor
-        fallback = (
+        fallback_txt = (
             f"{base_label} is already ahead: ~{base_mc_str} MC vs {other_label} at ~{other_mc_str}. "
-            f"That’s roughly {inv:.1f}x bigger. {mood} vibes for the meme king. ( ͡$ ͜ʖ ͡$)"
+            f"That’s roughly {inv:.1f}x bigger. Who’s the real meme king now, huh? ( ͡$ ͜ʖ ͡$)"
         )
 
-    base_txt = fallback
-
-    # -------- Optional: Grok für extra spicy Antwort --------
+    # --- Grok-Spice oben drauf, wenn API-Key vorhanden ---
+    txt = fallback_txt
     if GROK_API_KEY:
-        direction = "other_bigger" if factor >= 1 else "base_bigger"
-
-        ctx = (
-            f"Base token: {base_label} {base_emoji} (MC ≈ {base_mc_str} USD). "
-            f"Other token: {other_label} {other_emoji} (MC ≈ {other_mc_str} USD). "
-            f"Ratio other/base ≈ {factor:.1f}x. "
-            f"Direction: {direction}. Mood: {mood}."
-        )
-
-        prompt = (
-            "User on Crypto Twitter asked to compare market caps of two tokens in a funny degen way.\n\n"
-            f"{ctx}\n\n"
-            "Write ONE very short reply (max 220 characters), spicy but not abusive, in English. "
-            "Style: degen Crypto Twitter. Requirements:\n"
-            "- Mention both tokens.\n"
-            "- Refer to the ~factor gap in a fun way.\n"
-            "- Reflect the given mood word.\n"
-            "- Include exactly one Lennyface-style emoticon like ( ͡° ͜ʖ ͡°) or ( ͡$ ͜ʖ ͡$).\n"
-            "- Use 1–2 crypto/meme hashtags.\n"
-            "- Do NOT include any URLs or @mentions.\n"
-        )
-
         try:
-            grok_text = grok_generate(prompt)
-            if grok_text:
-                base_txt = grok_text.strip()
+            # Ein bisschen Kontext: wer ist wer, wie groß ist der Faktor
+            ctx = (
+                f"Base token: {base_label} MC={base_mc_str}. "
+                f"Other token: {other_label} MC={other_mc_str}. "
+                f"Other/Base factor: {factor:.1f}x."
+            )
+
+            prompt = (
+                "You are LennyBot, a degen meme coin bot speaking to Crypto Twitter.\n"
+                "User asked to compare two tokens by Market Cap (MC).\n"
+                "Write ONE very short, spicy degen line about the MC difference.\n"
+                "- Use the factor to describe how far apart they are (x).\n"
+                "- Keep it under 200 characters.\n"
+                "- Include exactly one Lennyface like ( ͡° ͜ʖ ͡°) or ( ͡$ ͜ʖ ͡$).\n"
+                "- Do NOT include any URLs or @mentions.\n"
+                "- Feel free to joke if the gap is huge (e.g. 1000x+).\n"
+                f"Context: {ctx}"
+            )
+
+            grok_answer = grok_generate(prompt) or ""
+            grok_answer = grok_answer.strip()
+
+            # URLs raus
+            grok_answer = re.sub(r"https?://\S+", "", grok_answer)
+            # @handle raus
+            try:
+                pattern = re.compile(rf"@{re.escape(BOT_HANDLE)}", re.IGNORECASE)
+                grok_answer = pattern.sub("", grok_answer)
+            except Exception:
+                pass
+
+            grok_answer = re.sub(r"\s+", " ", grok_answer).strip()
+
+            if grok_answer:
+                txt = grok_answer
+
         except Exception as e:
-            log.warning("Grok compare failed, using fallback: %s", e)
+            log.warning("Grok MC compare failed: %s", e)
+            # txt bleibt fallback_txt
 
-    # -------- Lennyface sicherstellen --------
-    if "( ͡" not in base_txt:
-        base_txt += " ( ͡° ͜ʖ ͡°)"
+       # === Token-Emojis je Coin (optional) ===
+    TOKEN_EMOJIS = {
+        "pepe":  "🐸",
+        "bonk":  "🐾",
+        "wif":   "🐶",
+        "wojak": "😢",
+        "troll": "👹",
+        "btc":   "🟧",
+        "lenny": "( ͡° ͜ʖ ͡°)",
+    }
 
-    # -------- URLs & @-Mentions aus Grok-Antwort sicher entfernen --------
-    base_txt = re.sub(r"https?://\S+", "", base_txt)
-    try:
-        pattern = re.compile(rf"@{re.escape(BOT_HANDLE)}", re.IGNORECASE)
-        base_txt = pattern.sub("", base_txt)
-    except Exception:
-        pass
-    base_txt = re.sub(r"\s+", " ", base_txt).strip()
+    emo_base = TOKEN_EMOJIS.get(base_key, "")
+    emo_other = TOKEN_EMOJIS.get(other_key, "")
 
-    # -------- Dex-Link von BASE anhängen --------
-    final_txt = base_txt
-    pair_url = base_stats.get("url")
-    if pair_url:
-        url_part = pair_url.strip()
-        max_len = 280
-        reserved = len(url_part) + 1
-        if len(final_txt) + reserved > max_len:
-            final_txt = final_txt[: max_len - reserved].rstrip(" .,!-")
-        final_txt = f"{final_txt} {url_part}"
+    # Emoji voranstellen (Basis-Token)
+    if emo_base:
+        txt = f"{emo_base} {txt}"
 
-    return final_txt[:280]
+    # Emoji hinten anhängen (Vergleichs-Token)
+    if emo_other:
+        txt = f"{txt} {emo_other}"
 
+    # Dex-Link (von base) optional anhängen
+    if base_stats.get("url"):
+        url_part = base_stats["url"].strip()
+        if url_part:
+            max_len = 280
+            reserved = len(url_part) + 1  # Leerzeichen + URL
+            if len(txt) + reserved > max_len:
+                txt = txt[: max_len - reserved].rstrip(" .,!-")
+            txt = f"{txt} {url_part}"
+
+    return txt
 
 # =========================
 # Helfer: Tweets holen
