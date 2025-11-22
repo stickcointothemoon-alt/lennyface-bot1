@@ -878,10 +878,6 @@ def _fetch_token_stats_for_compare(ca: str, override_url: str | None = None) -> 
 
 
 def _build_compare_registry() -> dict:
-    """
-    Registry aller Tokens, die der Bot für MC-Vergleiche kennt.
-    Key = normalized Name (lowercase, ohne $), Value = dict mit Infos.
-    """
     reg = {}
 
     # $LENNY immer drin
@@ -891,21 +887,24 @@ def _build_compare_registry() -> dict:
             "ca": LENNY_TOKEN_CA,
             "url": DEX_TOKEN_URL or "",
         }
-        # Optional: alias lennyface
-        reg["lennyface"] = reg["lenny"]
+        reg["lennyface"] = reg["lenny"]  # Alias
 
-    # COMPARE_TOKEN_1_* aus ENV
-    if COMPARE_TOKEN_1_NAME and COMPARE_TOKEN_1_CA:
-        key = COMPARE_TOKEN_1_NAME.lower().lstrip("$")
-        reg[key] = {
-            "symbol": f"${COMPARE_TOKEN_1_NAME.upper().lstrip('$')}",
-            "ca": COMPARE_TOKEN_1_CA,
-            "url": COMPARE_TOKEN_1_URL,
-        }
+    # Dynamische Slots 1–5
+    for i in range(1, 6):
+        name = os.environ.get(f"COMPARE_TOKEN_{i}_NAME", "").strip()
+        ca   = os.environ.get(f"COMPARE_TOKEN_{i}_CA", "").strip()
+        url  = os.environ.get(f"COMPARE_TOKEN_{i}_URL", "").strip()
 
-    # 🔮 Später: COMPARE_TOKEN_2_*, COMPARE_TOKEN_3_* hier ergänzen
+        if name and ca:
+            key = name.lower().lstrip("$")
+            reg[key] = {
+                "symbol": f"${name.upper().lstrip('$')}",
+                "ca": ca,
+                "url": url,
+            }
 
     return reg
+
 
 
 # 👉 Muss VOR build_mc_compare_reply definiert werden
