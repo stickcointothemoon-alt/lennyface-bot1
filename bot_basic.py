@@ -821,6 +821,33 @@ def _fetch_token_stats_for_compare(ca: str, override_url: str | None = None) -> 
     if not ca:
         return None
 
+    # --- Special Case: BTC via CoinGecko ---
+    if ca.upper() == "BTC" or override_url == "COINGECKO":
+        try:
+            r = requests.get(
+                "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_market_cap=true",
+                timeout=10
+            )
+            r.raise_for_status()
+            data = r.json() or {}
+            btc = data.get("bitcoin") or {}
+
+            price = float(btc.get("usd") or 0)
+            mc    = float(btc.get("usd_market_cap") or 0)
+            vol24 = 0.0  # Coingecko endpoint liefert kein vol hier
+
+            return {
+                "price": price,
+                "mc": mc,
+                "vol24": vol24,
+                "dex": "coingecko",
+                "url": "https://www.coingecko.com/en/coins/bitcoin",
+            }
+        except Exception as e:
+            log.warning("Coingecko fetch failed: %s", e)
+            return None
+
+
     # Immer API benutzen – nie die HTML-Seite
     if override_url:
         url = override_url
