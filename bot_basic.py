@@ -1007,6 +1007,19 @@ def _build_compare_registry() -> dict:
 # 👉 Muss VOR build_mc_compare_reply definiert werden
 COMPARE_REGISTRY = _build_compare_registry()
 
+# === Token-Emojis je Coin (optional) ===
+TOKEN_EMOJIS = {
+    "pepe":  "🐸",
+    "bonk":  "🐾",
+    "wif":   "🐶",
+    "wojak": "😢",
+    "troll": "👹",
+    "btc":   "🟧",
+    "lenny": "( ͡° ͜ʖ ͡°)",
+    "lennyface": "( ͡° ͜ʖ ͡°)",
+}
+
+
 
 def _extract_compare_keyword(part: str) -> str | None:
     """
@@ -1139,21 +1152,20 @@ def build_mc_compare_reply(src: str) -> str:
     # Wie oft größer ist other vs base?
     factor = other_mc / base_mc
 
+    base_mc_str = _format_usd_short(base_mc)
+    other_mc_str = _format_usd_short(other_mc)
+
+    # Labels inkl. Emojis
     base_label = base_info["symbol"]
     other_label = other_info["symbol"]
 
-    # Emoji an Token hängen (falls vorhanden)
     base_emoji = TOKEN_EMOJIS.get(base_key, "")
     other_emoji = TOKEN_EMOJIS.get(other_key, "")
 
     if base_emoji:
-    base_label = f"{base_label} {base_emoji}"
-
+        base_label = f"{base_label} {base_emoji}"
     if other_emoji:
-    other_label = f"{other_label} {other_emoji}"
-
-    base_mc_str = _format_usd_short(base_mc)
-    other_mc_str = _format_usd_short(other_mc)
+        other_label = f"{other_label} {other_emoji}"
 
     log.info(
         "MC Compare: %s (%s) ~ %s MC vs %s (%s) ~ %s MC → factor=%.2fx",
@@ -1181,7 +1193,6 @@ def build_mc_compare_reply(src: str) -> str:
     txt = fallback_txt
     if GROK_API_KEY:
         try:
-            # Ein bisschen Kontext: wer ist wer, wie groß ist der Faktor
             ctx = (
                 f"Base token: {base_label} MC={base_mc_str}. "
                 f"Other token: {other_label} MC={other_mc_str}. "
@@ -1221,37 +1232,15 @@ def build_mc_compare_reply(src: str) -> str:
             log.warning("Grok MC compare failed: %s", e)
             # txt bleibt fallback_txt
 
-       # === Token-Emojis je Coin (optional) ===
-    TOKEN_EMOJIS = {
-        "pepe":  "🐸",
-        "bonk":  "🐾",
-        "wif":   "🐶",
-        "wojak": "😢",
-        "troll": "👹",
-        "btc":   "🟧",
-        "lenny": "( ͡° ͜ʖ ͡°)",
-    }
-
-    emo_base = TOKEN_EMOJIS.get(base_key, "")
-    emo_other = TOKEN_EMOJIS.get(other_key, "")
-
-    # Emoji voranstellen (Basis-Token)
-    if emo_base:
-        txt = f"{emo_base} {txt}"
-
-    # Emoji hinten anhängen (Vergleichs-Token)
-    if emo_other:
-        txt = f"{txt} {emo_other}"
-
     # Dex-Link (von base) optional anhängen
     if base_stats.get("url"):
-    url_part = base_stats["url"].strip()
-    if url_part:
-        max_len = 280
-        reserved = len(url_part) + 1
-        if len(txt) + reserved > max_len:
-            txt = txt[: max_len - reserved].rstrip(" .,!-")
-        txt = f"{txt} {url_part}"
+        url_part = base_stats["url"].strip()
+        if url_part:
+            max_len = 280
+            reserved = len(url_part) + 1
+            if len(txt) + reserved > max_len:
+                txt = txt[: max_len - reserved].rstrip(" .,!-")
+            txt = f"{txt} {url_part}"
 
     # FIX — keeps Twitter blue highlight for $tokens
     txt = re.sub(r"\$([A-Za-z0-9]+)’s", r"$\1 is", txt)
