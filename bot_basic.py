@@ -818,13 +818,10 @@ def _format_usd_short(n: float) -> str:
 
 
 def _fetch_token_stats_for_compare(ca: str, override_url: str | None = None) -> dict | None:
-    """
-    Holt MC / Vol für ein beliebiges Token via Dexscreener.
-    Wird für $LENNY und Vergleichstoken benutzt.
-    """
     if not ca:
         return None
 
+    # Immer API benutzen – nie die HTML-Seite
     if override_url:
         url = override_url
     else:
@@ -837,6 +834,27 @@ def _fetch_token_stats_for_compare(ca: str, override_url: str | None = None) -> 
         pairs = data.get("pairs") or []
         if not pairs:
             return None
+
+        p = pairs[0]
+        price = float(p.get("priceUsd") or 0)
+        mc    = float(p.get("fdv") or p.get("marketCap") or 0)
+        vol24 = float(
+            (p.get("volume") or {}).get("h24")
+            or p.get("volume24h")
+            or 0
+        )
+
+        return {
+            "price": price,
+            "mc": mc,
+            "vol24": vol24,
+            "dex": p.get("dexId", ""),
+            "url": p.get("url", override_url or ""),
+        }
+    except Exception as e:
+        log.warning("Dexscreener compare failed for %s: %s", ca, e)
+        return None
+
 
         p = pairs[0]
         price = float(p.get("priceUsd") or 0)
