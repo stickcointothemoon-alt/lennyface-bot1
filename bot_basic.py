@@ -911,7 +911,7 @@ def _fetch_token_stats_for_compare(ca: str, override_url: str | None = None) -> 
 def _build_compare_registry() -> dict:
     reg = {}
 
-    # $LENNY immer drin
+    # LENNY immer im Registry
     if LENNY_TOKEN_CA:
         reg["lenny"] = {
             "symbol": "$LENNY",
@@ -920,31 +920,62 @@ def _build_compare_registry() -> dict:
         }
         reg["lennyface"] = reg["lenny"]  # Alias
 
-    # Dynamische Slots 1–5
-    for i in range(1, 6):
-        name = os.environ.get(f"COMPARE_TOKEN_{i}_NAME", "").strip()
-        ca   = os.environ.get(f"COMPARE_TOKEN_{i}_CA", "").strip()
-        url  = os.environ.get(f"COMPARE_TOKEN_{i}_URL", "").strip()
+    # TOKEN 1
+    if COMPARE_TOKEN_1_NAME and COMPARE_TOKEN_1_CA:
+        key = COMPARE_TOKEN_1_NAME.lower().lstrip("$")
+        reg[key] = {
+            "symbol": f"${COMPARE_TOKEN_1_NAME.upper().lstrip('$')}",
+            "ca": COMPARE_TOKEN_1_CA,
+            "url": COMPARE_TOKEN_1_URL,
+        }
 
-        if name and ca:
-            key = name.lower().lstrip("$")
-            reg[key] = {
-                "symbol": f"${name.upper().lstrip('$')}",
-                "ca": ca,
-                "url": url,
+    # TOKEN 2
+    if COMPARE_TOKEN_2_NAME and COMPARE_TOKEN_2_CA:
+        key = COMPARE_TOKEN_2_NAME.lower().lstrip("$")
+        reg[key] = {
+            "symbol": f"${COMPARE_TOKEN_2_NAME.upper().lstrip('$')}",
+            "ca": COMPARE_TOKEN_2_CA,
+            "url": COMPARE_TOKEN_2_URL,
+        }
 
-    # COMPARE_TOKEN_6_* aus ENV (BTC / Coingecko)
+    # TOKEN 3
+    if COMPARE_TOKEN_3_NAME and COMPARE_TOKEN_3_CA:
+        key = COMPARE_TOKEN_3_NAME.lower().lstrip("$")
+        reg[key] = {
+            "symbol": f"${COMPARE_TOKEN_3_NAME.upper().lstrip('$')}",
+            "ca": COMPARE_TOKEN_3_CA,
+            "url": COMPARE_TOKEN_3_URL,
+        }
+
+    # TOKEN 4
+    if COMPARE_TOKEN_4_NAME and COMPARE_TOKEN_4_CA:
+        key = COMPARE_TOKEN_4_NAME.lower().lstrip("$")
+        reg[key] = {
+            "symbol": f"${COMPARE_TOKEN_4_NAME.upper().lstrip('$')}",
+            "ca": COMPARE_TOKEN_4_CA,
+            "url": COMPARE_TOKEN_4_URL,
+        }
+
+    # TOKEN 5
+    if COMPARE_TOKEN_5_NAME and COMPARE_TOKEN_5_CA:
+        key = COMPARE_TOKEN_5_NAME.lower().lstrip("$")
+        reg[key] = {
+            "symbol": f"${COMPARE_TOKEN_5_NAME.upper().lstrip('$')}",
+            "ca": COMPARE_TOKEN_5_CA,
+            "url": COMPARE_TOKEN_5_URL,
+        }
+
+    # TOKEN 6 — BTC über Coingecko
     if COMPARE_TOKEN_6_NAME and COMPARE_TOKEN_6_CA:
         key = COMPARE_TOKEN_6_NAME.lower().lstrip("$")
         reg[key] = {
             "symbol": f"${COMPARE_TOKEN_6_NAME.upper().lstrip('$')}",
             "ca": COMPARE_TOKEN_6_CA,
-            "url": COMPARE_TOKEN_6_URL,
-        
-
-            }
+            "url": COMPARE_TOKEN_6_URL,   # "COINGECKO"
+        }
 
     return reg
+
 
 
 
