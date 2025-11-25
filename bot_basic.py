@@ -1837,7 +1837,7 @@ def main():
                         remember_and_maybe_backup(tid)
                         continue
 
-                                        # --- Command-Erkennung mit Toggles ---
+                   # --- Command-Erkennung mit Toggles ---
                     src_lower = src.lower()
                     cmd_used = None  # für User-Memory
 
@@ -1870,7 +1870,7 @@ def main():
                             text = build_lore_reply()
                             cmd_used = "lore"
 
-                        # 3) MC COMPARE (z.B. "lenny vs troll", "bonk vs lenny", mit oder ohne                                 'mc')
+                        # 3) MC COMPARE (z.B. "lenny vs troll", "bonk vs lenny", mit oder ohne 'mc')
                         elif "vs" in src_lower and any(tok in src_lower for tok in [
                             "lenny", "lennyface", "$lenny",
                             "troll", "$troll",
@@ -1933,18 +1933,13 @@ def main():
                         log.warning("Empty text from command '%s', using fallback.", cmd_used)
                         text = "My brain just lagged, degen. Try again in a sec. ( ͡° ͜ʖ ͡°)"
 
-                     # >>> NEU: Dialekt / Ton anpassen
-                     text = apply_dialect(text, cmd_used)
-                     # <<< ENDE NEU
-
-                     # >>> LennyFace einbauen (Season + Mood)
-                     text = decorate_with_lenny_face(text, cmd_used)
-                     # <<< ENDE
-
-
-                    # >>> HIER NEU: LennyFace einbauen
-                    text = decorate_with_lenny_face(text, cmd_used)
+                    # >>> NEU: Dialekt / Ton anpassen
+                    text = apply_dialect(text, cmd_used)
                     # <<< ENDE NEU
+
+                    # >>> LennyFace einbauen (Season + Mood)
+                    text = decorate_with_lenny_face(text, cmd_used)
+                    # <<< ENDE
 
                     # User-Memory updaten
                     update_user_profile(author_id_str, cmd_used)
@@ -1957,6 +1952,7 @@ def main():
 
                     # Meme-Entscheidung (smart)
                     with_meme = should_attach_meme(src, is_mention=True)
+
 
 
 
