@@ -52,6 +52,13 @@ MEME_PROBABILITY      = float(os.environ.get("MEME_PROBABILITY", "0.3"))
 # Extra-Auto-Meme-Logik: wenn Tweet "nach Meme aussieht"
 AUTO_MEME_EXTRA_CHANCE = float(os.environ.get("AUTO_MEME_EXTRA_CHANCE", "0.5"))
 
+LENNY_TONE_MODE = os.environ.get("LENNY_TONE_MODE", "default").lower()
+# mögliche Werte:
+# "default"  -> normales Lenny-English
+# "pk_en"    -> „pakistanisch angehauchter“ Degen-English-Style
+# später: "de_en", "es", etc.
+
+
 # Auto Meme Mode (Dashboard Toggle)
 AUTO_MEME_MODE = os.environ.get("AUTO_MEME_MODE", "1") == "1"
 
@@ -129,6 +136,56 @@ LENNY_EASTER_FACES = [
     "( ͡° ͜ʖ ͡°)🥕",
     "( ͡° ͜ʖ ͡°)🐣",
 ]
+
+# ================================
+# DIALEKT / TONE HELFER
+# ================================
+
+def _apply_pk_english(text: str, cmd_used: str | None) -> str:
+    """
+    Sehr softer „Pakistani Crypto Twitter“-Vibe.
+    Kein komplettes Umschreiben, nur kleine Anpassungen.
+    Keine Beleidigungen, kein Hate – nur Flavor.
+    """
+    # Zu lange Texte nicht mehr anfassen (wegen 280-Char-Limit)
+    if len(text) > 240:
+        return text
+
+    t = text
+
+    # 1) "bro" -> "bro yaar" (max. 1x)
+    t = re.sub(r"\bbro\b", "bro yaar", t, count=1, flags=re.IGNORECASE)
+
+    # 2) "fam" -> "fam yaar" (max. 1x)
+    t = re.sub(r"\bfam\b", "fam yaar", t, count=1, flags=re.IGNORECASE)
+
+    # 3) "degen" -> "degen yaar" (max. 1x)
+    t = re.sub(r"\bdegen(s)?\b", r"degen\1 yaar", t, count=1, flags=re.IGNORECASE)
+
+    # 4) Wenn noch Platz: kleines Flavor-Tag hinten dran
+    if "yaar" not in t.lower() and len(t) < 230:
+        if t.endswith((")", "🚀", "😂", "🤣", "✨", "😅", "😎")):
+            t = t + " yaar"
+        elif t.endswith(("!", "?", ".")):
+            t = t[:-1] + " yaar" + t[-1]
+        else:
+            t = t + " yaar"
+
+    return t
+
+
+def apply_dialect(text: str, cmd_used: str | None) -> str:
+    """
+    Wendet je nach LENNY_TONE_MODE einen Dialekt/Style an.
+    """
+    mode = (LENNY_TONE_MODE or "default").lower()
+
+    if mode == "pk_en":
+        return _apply_pk_english(text, cmd_used)
+
+    # später: weitere Modes, z.B. "de_en", "es", ...
+    return text
+
 
 # =====================================
 # SEASON-DETECTION
@@ -1876,6 +1933,14 @@ def main():
                         log.warning("Empty text from command '%s', using fallback.", cmd_used)
                         text = "My brain just lagged, degen. Try again in a sec. ( ͡° ͜ʖ ͡°)"
 
+                     # >>> NEU: Dialekt / Ton anpassen
+                     text = apply_dialect(text, cmd_used)
+                     # <<< ENDE NEU
+
+                     # >>> LennyFace einbauen (Season + Mood)
+                     text = decorate_with_lenny_face(text, cmd_used)
+                     # <<< ENDE
+
 
                     # >>> HIER NEU: LennyFace einbauen
                     text = decorate_with_lenny_face(text, cmd_used)
@@ -1892,6 +1957,8 @@ def main():
 
                     # Meme-Entscheidung (smart)
                     with_meme = should_attach_meme(src, is_mention=True)
+
+
 
 
 
