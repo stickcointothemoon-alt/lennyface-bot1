@@ -146,19 +146,43 @@ def pick_lenny_face(mood: str = "base") -> str:
         pool = LENNY_BASE_FACES
     return random.choice(pool)
 
+from datetime import datetime, timezone  # falls noch nicht ganz oben importiert
+
+
+def apply_season_mood(base_mood: str) -> str:
+    """
+    Überschreibt die Stimmung je nach Season:
+    - Dezember  → xmas
+    - März/April → easter
+    Sonst bleibt base_mood.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        m = now.month
+    except Exception:
+        return base_mood
+
+    # Xmas Season
+    if m == 12:
+        return "xmas"
+    # Easter Season (ungefähr)
+    if m in (3, 4):
+        return "easter"
+
+    return base_mood
+
+
 
 def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
     """
-    Hängt ein passendes Lennyface an den Reply an – abhängig vom Command.
-    Fügt NICHTs hinzu, wenn schon ein Lennyface im Text ist.
+    Hängt ein passendes Lennyface an den Reply an – abhängig vom Command + Season.
+    Wenn schon ein Lennyface drin ist, wird es durch ein random Face aus der Library ersetzt.
+    Dadurch sehen wir endlich die verschiedenen Variationen.
     """
     if not text:
         return text
 
-    # Wenn schon irgendein ( ͡ im Text ist, nichts doppelt reinhauen
-    if "( ͡" in text:
-        return text
-
+    # --- Mood per Command wählen ---
     mood = "base"
 
     if cmd_used in ("gm", "alpha"):
@@ -166,21 +190,30 @@ def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
     elif cmd_used == "roast":
         mood = "cope"
     elif cmd_used == "price":
-        # Simple Heuristik: wenn Dump-Wörter → sad
         lower = text.lower()
         if any(k in lower for k in ["dump", "down", "red", "-%"]):
             mood = "sad"
         else:
             mood = "hype"
     elif cmd_used == "shill":
-        # Shill kann base oder hype sein
         mood = random.choice(["base", "hype"])
+    elif cmd_used == "mc_compare":
+        # Vergleich → eher degen/hype
+        mood = "hype"
     else:
         mood = "base"
 
+    # Season-Override (Xmas / Easter)
+    mood = apply_season_mood(mood)
+
     face = pick_lenny_face(mood)
 
-    # Schön ans Ende anhängen
+    # --- FALL 1: Es gibt schon irgendein ( ͡ ... ͜ʖ ... ) im Text ---
+    if "( ͡" in text:
+        # erstes vorhandenes Lennyface durch unser face austauschen
+        return re.sub(r"\( ͡.*?͜ʖ .*?\)", face, text, count=1)
+
+    # --- FALL 2: Noch kein Lennyface → ans Ende kleben ---
     if text.endswith(("!", "?", ".")):
         return text + " " + face
     return text + " " + face
@@ -1331,16 +1364,11 @@ def build_mc_compare_reply(src: str) -> str:
             grok_answer = re.sub(r"\s+", " ", grok_answer).strip()
 
             if grok_answer:
-                txt = grok_answer
-
-            if grok_answer:
                 txt = _fix_grok_glitches(grok_answer)
-
 
         except Exception as e:
             log.warning("Grok MC compare failed: %s", e)
             # txt bleibt fallback_txt
-
 
     # --- Token-Emojis direkt an Ticker im Text kleben ---
     emoji_map = {
@@ -1354,11 +1382,9 @@ def build_mc_compare_reply(src: str) -> str:
     }
 
     for sym, emo in emoji_map.items():
-        # Falls nach $TOKEN noch nicht das Emoji steht → hinzufügen
         pattern = rf"\${sym}\b(?!\s*{re.escape(emo)})"
         replace = f"${sym} {emo}"
         txt = re.sub(pattern, replace, txt)
-
 
     # Dex-Link (von base) optional anhängen
     if base_stats.get("url"):
@@ -1375,7 +1401,6 @@ def build_mc_compare_reply(src: str) -> str:
     txt = re.sub(r"\$([A-Za-z0-9]+)'s", r"$\1 is", txt)
 
     return txt
-
 
 # =========================
 # Helfer: Tweets holen
