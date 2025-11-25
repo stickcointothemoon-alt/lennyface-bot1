@@ -715,14 +715,31 @@ def sanitize_reply_links(text: str) -> str:
 
 def build_scam_warning_reply(src: str) -> str:
     """
-    Standard-Reply, wenn im User-Tweet ein verdächtiger Link ist.
-    Kein Repost des Links, nur Warnung.
+    Standard-Reply bei verdächtigen Links.
+    Kein Repost des Links, rotierende sichere Antworten.
+    Keine riskanten Begriffe (X Safety).
+    Immer mit $LENNY + Lennyface.
     """
-    return (
-        "Yo degen, chill with random links. "
-        "Scam sites drain wallets faster than a jeet dump. "
-        "Trust only Dexscreener + official $LENNY links. ( ͡° ͜ʖ ͡°)"
-    )
+
+    options = [
+        "Easy there, degen. Random links can drain bags real quick. Stick to Dexscreener + official $LENNY links only. ( ͡° ͜ʖ ͡°)",
+
+        "Careful fren — mystery links are how wallets go *bye bye*. Only trust Dexscreener + official $LENNY sources. ( ͡° ͜ʖ ͡°)",
+
+        "Unknown links = danger zone. Protect those bags and use only Dexscreener + official $LENNY links. Stay safe, stay smirkin’. ( ͡° ͜ʖ ͡°)",
+
+        "Random links? Nah fam. That’s a fast-track to getting rugged. Official $LENNY links + Dexscreener only. ( ͡° ͜ʖ ͡°)",
+
+        "Fren, clicking mystery links is like signing a blank check. Keep it clean: Dexscreener + official $LENNY links only. ( ͡° ͜ʖ ͡°)",
+
+        "Heads up — shady links love fresh wallets. Trust only Dexscreener + verified $LENNY sources. Smirk responsibly. ( ͡° ͜ʖ ͡°)",
+
+        "Yo, that link looks spicier than it should. Avoid getting cooked — use Dexscreener + official $LENNY links only. ( ͡° ͜ʖ ͡°)",
+
+        "Hold up degen — before you click anything, remember mystery links = instant regret. Stick to official $LENNY + Dexscreener. ( ͡° ͜ʖ ͡°)",
+    ]
+
+    return random.choice(options)
 
 
 # =========================
