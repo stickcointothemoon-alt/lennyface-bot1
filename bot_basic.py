@@ -1159,6 +1159,17 @@ def _emoji_for_key(key: str) -> str:
         return "₿"
     return ""
 
+def _fix_grok_glitches(text: str) -> str:
+    """
+    Kleine Nachkorrektur für typische Grok-Fehler.
+    """
+    # "is market cap is" → "market cap is"
+    text = text.replace(" is market cap is", " market cap is")
+    text = text.replace("is market cap is", " market cap is")
+
+    return text
+
+
 
 def build_mc_compare_reply(src: str) -> str:
     """
@@ -1322,9 +1333,32 @@ def build_mc_compare_reply(src: str) -> str:
             if grok_answer:
                 txt = grok_answer
 
+            if grok_answer:
+                txt = _fix_grok_glitches(grok_answer)
+
+
         except Exception as e:
             log.warning("Grok MC compare failed: %s", e)
             # txt bleibt fallback_txt
+
+
+    # --- Token-Emojis direkt an Ticker im Text kleben ---
+    emoji_map = {
+        "LENNY": "( ͡° ͜ʖ ͡°)",
+        "PEPE":  "🐸",
+        "BONK":  "🐾",
+        "WIF":   "🐶",
+        "WOJAK": "😢",
+        "TROLL": "👹",
+        "BTC":   "🟧",
+    }
+
+    for sym, emo in emoji_map.items():
+        # Falls nach $TOKEN noch nicht das Emoji steht → hinzufügen
+        pattern = rf"\${sym}\b(?!\s*{re.escape(emo)})"
+        replace = f"${sym} {emo}"
+        txt = re.sub(pattern, replace, txt)
+
 
     # Dex-Link (von base) optional anhängen
     if base_stats.get("url"):
