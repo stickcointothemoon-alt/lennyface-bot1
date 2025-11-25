@@ -935,23 +935,72 @@ def build_market_reply(context_snippet: str = "") -> str:
     Antwortet NUR mit Market Cap + Lenny-Spruch.
     Nutzt Grok wenn möglich.
     Dex-Link wird IMMER am Ende angehängt.
+    Lennyfaces werden NICHT hier eingefügt, sondern später über
+    decorate_with_lenny_face().
     """
     stats = fetch_lenny_stats()
     if not stats:
-        return (
-            "Can't reach the $LENNY oracle right now, try later ( ͡° ͜ʖ ͡°) "
-            "#Lenny #Solana"
-        )
+        # Kein Lennyface hier, der kommt später über decorate_with_lenny_face
+        return "Can't reach the $LENNY oracle right now, try later. #Lenny #Solana"
 
     mc = stats["mc"]
     mc_str = format_number(mc)
     pair_url = stats.get("pair_url") or ""
 
-    # -------- Fallback wenn kein Grok --------
-    fallback = (
-        f"$LENNY Market Cap: {mc_str} ( ͡° ͜ʖ ͡°) "
-        "#Lenny #Solana #Memecoins"
-    )
+    # -------- Fallback, falls kein Grok / Fehler --------
+    # Wichtig: KEIN ( ͡° ͜ʖ ͡°) hier, das macht die Library.
+    fallback = f"$LENNY Market Cap: {mc_str}. #Lenny #Solana #Memecoins"
+
+    # -------- Mit Grok --------
+    if GROK_API_KEY:
+        try:
+            ctx = f"User message: {context_snippet[:140]}. Market Cap: {mc_str}."
+
+            prompt = (
+                "You are LennyBot, a degen meme coin bot speaking to Crypto Twitter.\n"
+                "User asks about $LENNY Market Cap.\n"
+                "Write a VERY short, cheeky degen reply.\n"
+                "- Use ONLY the Market Cap number given.\n"
+                "- Do NOT include any URLs or links.\n"
+                "- Do NOT include any Lennyface – that will be added later automatically.\n"
+                "- Include 1–2 crypto-related hashtags.\n"
+                f"Context: {ctx}"
+            )
+
+            base_txt = grok_generate(prompt) or fallback
+        except Exception as e:
+            log.warning("Grok market reply failed: %s", e)
+            base_txt = fallback
+    else:
+        base_txt = fallback
+
+    # -------- URLs entfernen, falls Grok doch was geschmuggelt hat --------
+    base_txt = re.sub(r"https?://\S+", "", base_txt).strip()
+
+    # -------- Falls Grok den Bot erwähnt → raus --------
+    try:
+        pattern = re.compile(rf"@{re.escape(BOT_HANDLE)}", re.IGNORECASE)
+        base_txt = pattern.sub("", base_txt)
+    except Exception:
+        pass
+
+    base_txt = re.sub(r"\s+", " ", base_txt).strip()
+
+    # -------- Dex-Link selbst anfügen --------
+    if pair_url:
+        max_len = 280
+        url_part = pair_url.strip()
+        reserved = len(url_part) + 1  # Leerzeichen + URL
+
+        if len(base_txt) + reserved > max_len:
+            base_txt = base_txt[: max_len - reserved].rstrip(" .,!-")
+
+        final_txt = f"{base_txt} {url_part}"
+    else:
+        final_txt = base_txt[:280]
+
+    return final_txt
+
 
 
 # =====================================
@@ -1343,11 +1392,12 @@ def build_mc_compare_reply(src: str) -> str:
                 "Write ONE very short, spicy degen line about the MC difference.\n"
                 "- Use the factor to describe how far apart they are (x).\n"
                 "- Keep it under 200 characters.\n"
-                "- Include exactly one Lennyface like ( ͡° ͜ʖ ͡°) or ( ͡$ ͜ʖ ͡$).\n"
+                "- Do NOT include any Lennyface – that will be added later automatically.\n"
                 "- Do NOT include any URLs or @mentions.\n"
                 "- Feel free to joke if the gap is huge (e.g. 1000x+).\n"
                 f"Context: {ctx}"
-            )
+           )
+
 
             grok_answer = grok_generate(prompt) or ""
             grok_answer = grok_answer.strip()
