@@ -226,6 +226,14 @@ GROK_EXTRA_PROMPT       = os.environ.get("GROK_EXTRA_PROMPT", "")            # e
 LENNY_TOKEN_CA = os.environ.get("LENNY_TOKEN_CA", "").strip()
 DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 
+# --- Link-Sicherheit ---
+SAFE_LINK_DOMAINS = os.environ.get(
+    "SAFE_LINK_DOMAINS",
+    "dexscreener.com,linktr.ee"
+).split(",")
+SAFE_LINK_DOMAINS = [d.strip().lower() for d in SAFE_LINK_DOMAINS if d.strip()]
+
+
 # =====================================
 # MC_COMPARE – weitere Tokens aus ENV
 # =====================================
@@ -597,6 +605,92 @@ def save_seen_now():
     csv = ",".join(SEEN)
     _set_config_vars({"STATE_SEEN_IDS": csv})
     log.info("State backup (manual): %d IDs gespeichert.", len(SEEN))
+
+# ==========================
+#  Link- / Scam-Detection
+# ==========================
+import re
+from urllib.parse import urlparse
+
+URL_REGEX = re.compile(r"https?://\S+", re.IGNORECASE)
+
+# SAFE_LINK_DOMAINS wird oben bei den ENV-Variablen gesetzt:
+# SAFE_LINK_DOMAINS = os.environ.get("SAFE_LINK_DOMAINS", "dexscreener.com,linktr.ee").split(",")
+# SAFE_LINK_DOMAINS = [d.strip().lower() for d in SAFE_LINK_DOMAINS if d.strip()]
+
+
+def extract_urls(text: str) -> list[str]:
+    if not text:
+        return []
+    return URL_REGEX.findall(text)
+
+
+def is_safe_url(url: str) -> bool:
+    """
+    True, wenn die Domain in SAFE_LINK_DOMAINS whitelisted ist.
+    Alles andere → unsicher.
+    """
+    try:
+        parsed = urlparse(url)
+        host = (parsed.netloc or "").lower()
+        if not host:
+            return False
+
+        for dom in SAFE_LINK_DOMAINS:
+            dom = dom.strip().lower()
+            if not dom:
+                continue
+            # exakte Domain oder Subdomain
+            if host == dom or host.endswith("." + dom):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def has_suspicious_link(text: str) -> bool:
+    """
+    True, wenn im Text irgendein Link ist,
+    der NICHT in SAFE_LINK_DOMAINS liegt.
+    """
+    urls = extract_urls(text)
+    if not urls:
+        return False
+
+    for u in urls:
+        if not is_safe_url(u):
+            return True
+    return False
+
+
+def sanitize_reply_links(text: str) -> str:
+    """
+    Entfernt ALLE Links aus der Antwort, die nicht whitelisted sind.
+    Dexscreener + Linktree bleiben erhalten (über SAFE_LINK_DOMAINS).
+    """
+    if not text:
+        return text
+
+    def _replacer(match: re.Match) -> str:
+        url = match.group(0)
+        return url if is_safe_url(url) else ""
+
+    cleaned = URL_REGEX.sub(_replacer, text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def build_scam_warning_reply(src: str) -> str:
+    """
+    Standard-Reply, wenn im User-Tweet ein verdächtiger Link ist.
+    Kein Repost des Links, nur Warnung.
+    """
+    return (
+        "Yo degen, chill with random links. "
+        "Scam sites drain wallets faster than a jeet dump. "
+        "Trust only Dexscreener + official $LENNY links. ( ͡° ͜ʖ ͡°)"
+    )
+
 
 # =========================
 # Usage Stats (für Dashboard)
@@ -1526,95 +1620,101 @@ def main():
                         remember_and_maybe_backup(tid)
                         continue
 
-                    # --- Command-Erkennung mit Toggles ---
+                                        # --- Command-Erkennung mit Toggles ---
                     src_lower = src.lower()
                     cmd_used = None  # für User-Memory
 
                     # DEBUG: Command-Detection loggen
                     log.info("Command detection for mention %s: %s", tid, src_lower)
 
-                    # 1) HELP
-                    if "help" in src_lower and "mc" not in src_lower and "vs" not in src_lower:
-                        if not ENABLE_HELP:
-                            log.info("help command ignored (disabled)")
-                            remember_and_maybe_backup(tid)
-                            continue
-                        text = build_help_reply()
-                        cmd_used = "help"
+                    # --- NEU: Scam-Link-Check ---
+                    if has_suspicious_link(src):
+                        # Wenn ein verdächtiger Link im User-Tweet ist:
+                        # → KEIN normaler Command, nur Warnung schicken
+                        text = build_scam_warning_reply(src)
+                        cmd_used = "scam_warn"
 
-                    # 2) LORE
-                    elif "lore" in src_lower:
-                        if not ENABLE_LORE:
-                            log.info("lore command ignored (disabled)")
-                            remember_and_maybe_backup(tid)
-                            continue
-                        text = build_lore_reply()
-                        cmd_used = "lore"
-
-                    # 3) MC COMPARE (z.B. "lenny vs troll", "bonk vs lenny", mit oder ohne 'mc')
-                    elif "vs" in src_lower and any(tok in src_lower for tok in [
-                        "lenny", "lennyface", "$lenny",
-                        "troll", "$troll",
-                        "bonk", "$bonk",
-                        "pepe", "$pepe",
-                        "wojak", "$wojak",
-                        "wif", "$wif",
-                        "btc", "bitcoin",
-                    ]):
-                        log.info("Using MC_COMPARE for: %s", src)
-                        text = build_mc_compare_reply(src)
-                        cmd_used = "mc_compare"
-
-
-                    # 4) PRICE / MC / STATS / VOLUME / CHART (Standard)
-                    elif any(k in src_lower for k in [
-                        "price", " mc", "market cap", "marketcap",
-                        "volume", "vol ", "stats", "chart"
-                    ]):
-                        if not ENABLE_STATS:
-                            log.info("stats/price/mc command ignored (disabled)")
-                            remember_and_maybe_backup(tid)
-                            continue
-                        text = build_market_reply(src)
-                        cmd_used = "price"
-
-                    # 5) ALPHA
-                    elif "alpha" in src_lower:
-                        if not ENABLE_ALPHA:
-                            log.info("alpha command ignored (disabled)")
-                            remember_and_maybe_backup(tid)
-                            continue
-                        text = build_alpha_reply(src)
-                        cmd_used = "alpha"
-
-                    # 6) GM
-                    elif src_lower.startswith("gm") or " gm" in src_lower:
-                        if not ENABLE_GM:
-                            log.info("gm command ignored (disabled)")
-                            remember_and_maybe_backup(tid)
-                            continue
-                        text = build_gm_reply(src)
-                        cmd_used = "gm"
-
-                    # 7) ROAST
-                    elif "roast me" in src_lower or " roast" in src_lower:
-                        if not ENABLE_ROAST:
-                            log.info("roast command ignored (disabled)")
-                            remember_and_maybe_backup(tid)
-                            continue
-                        text = build_roast_reply(src)
-                        cmd_used = "roast"
-
-                    # 8) Default-Shill
                     else:
-                        text = build_reply_text(src)
-                        cmd_used = "shill"
+                        # 1) HELP
+                        if "help" in src_lower and "mc" not in src_lower and "vs" not in src_lower:
+                            if not ENABLE_HELP:
+                                log.info("help command ignored (disabled)")
+                                remember_and_maybe_backup(tid)
+                                continue
+                            text = build_help_reply()
+                            cmd_used = "help"
+
+                        # 2) LORE
+                        elif "lore" in src_lower:
+                            if not ENABLE_LORE:
+                                log.info("lore command ignored (disabled)")
+                                remember_and_maybe_backup(tid)
+                                continue
+                            text = build_lore_reply()
+                            cmd_used = "lore"
+
+                        # 3) MC COMPARE (z.B. "lenny vs troll", "bonk vs lenny", mit oder ohne                                 'mc')
+                        elif "vs" in src_lower and any(tok in src_lower for tok in [
+                            "lenny", "lennyface", "$lenny",
+                            "troll", "$troll",
+                            "bonk", "$bonk",
+                            "pepe", "$pepe",
+                            "wojak", "$wojak",
+                            "wif", "$wif",
+                            "btc", "bitcoin",
+                        ]):
+                            log.info("Using MC_COMPARE for: %s", src)
+                            text = build_mc_compare_reply(src)
+                            cmd_used = "mc_compare"
+
+                        # 4) PRICE / MC / STATS / VOLUME / CHART (Standard)
+                        elif any(k in src_lower for k in [
+                            "price", " mc", "market cap", "marketcap",
+                            "volume", "vol ", "stats", "chart"
+                        ]):
+                            if not ENABLE_STATS:
+                                log.info("stats/price/mc command ignored (disabled)")
+                                remember_and_maybe_backup(tid)
+                                continue
+                            text = build_market_reply(src)
+                            cmd_used = "price"
+
+                        # 5) ALPHA
+                        elif "alpha" in src_lower:
+                            if not ENABLE_ALPHA:
+                                log.info("alpha command ignored (disabled)")
+                                remember_and_maybe_backup(tid)
+                                continue
+                            text = build_alpha_reply(src)
+                            cmd_used = "alpha"
+
+                        # 6) GM
+                        elif src_lower.startswith("gm") or " gm" in src_lower:
+                            if not ENABLE_GM:
+                                log.info("gm command ignored (disabled)")
+                                remember_and_maybe_backup(tid)
+                                continue
+                            text = build_gm_reply(src)
+                            cmd_used = "gm"
+
+                        # 7) ROAST
+                        elif "roast me" in src_lower or " roast" in src_lower:
+                            if not ENABLE_ROAST:
+                                log.info("roast command ignored (disabled)")
+                                remember_and_maybe_backup(tid)
+                                continue
+                            text = build_roast_reply(src)
+                            cmd_used = "roast"
+
+                        # 8) Default-Shill
+                        else:
+                            text = build_reply_text(src)
+                            cmd_used = "shill"
 
                     # SAFETY: falls irgendeine Funktion None zurückgibt
                     if not text:
                         log.warning("Empty text from command '%s', using fallback.", cmd_used)
                         text = "My brain just lagged, degen. Try again in a sec. ( ͡° ͜ʖ ͡°)"
-
 
 
                     # >>> HIER NEU: LennyFace einbauen
@@ -1623,10 +1723,16 @@ def main():
 
                     # User-Memory updaten
                     update_user_profile(author_id_str, cmd_used)
+
+                    # NEU: Unsichere Links aus der Antwort entfernen
+                    text = sanitize_reply_links(text)
+
+                    # Danach personalisieren
                     text = personalize_reply(text, author_id_str)
 
                     # Meme-Entscheidung (smart)
                     with_meme = should_attach_meme(src, is_mention=True)
+
 
 
                     try:
