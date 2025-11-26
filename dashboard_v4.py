@@ -5,6 +5,59 @@ from flask import Flask, request, redirect, url_for, render_template_string, abo
 
 app = Flask(__name__)
 
+# Wunschliste für MC-Compare (Tokens, die User angefragt haben)
+WISHLIST_FILE = "mc_compare_requests.txt"
+
+
+def load_mc_wishlist(limit: int = 50) -> list[dict]:
+    """
+    Liest die gespeicherten MC-Compare-Wunsch-Tokens aus der Datei.
+    Rückgabe: Liste von Dicts:
+      [
+        {"ts": "2025-11-26T22:03:07.985010Z", "token": "shiba", "src": "@..."},
+        ...
+      ]
+    """
+    if not os.path.exists(WISHLIST_FILE):
+        return []
+
+    rows: list[dict] = []
+    with open(WISHLIST_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Format: timestamp; token=XYZ; src=...
+            parts = line.split(";")
+            if not parts:
+                continue
+
+            ts = parts[0].strip()
+            token = None
+            src = None
+
+            for p in parts[1:]:
+                p = p.strip()
+                if p.startswith("token="):
+                    token = p[len("token="):]
+                elif p.startswith("src="):
+                    src = p[len("src="):]
+
+            if not token:
+                continue
+
+            rows.append({
+                "ts": ts,
+                "token": token,
+                "src": src or "",
+            })
+
+    # Neueste zuerst
+    rows.sort(key=lambda r: r["ts"], reverse=True)
+    return rows[:limit]
+
+
 # ================================
 # CONFIG
 # ================================
@@ -196,6 +249,10 @@ def render_dashboard(preview_text=None):
 
     lenny_stats    = fetch_lenny_stats()
     global_stats   = fetch_global_stats()
+
+    # MC-Compare Wunschliste (falls Datei vorhanden)
+    wishlist = load_mc_wishlist()
+
 
     # Stats
     stats_date  = cfg.get("STATS_DATE", "")
@@ -815,6 +872,55 @@ def render_dashboard(preview_text=None):
 </div>
 
 <!-- ==========================
+     MC COMPARE WISHLIST
+=========================== -->
+<div class="card">
+    <h2>MC Compare Wishlist</h2>
+    {% if wishlist %}
+        <p class="stat">
+            Tokens users tried to compare with $LENNY. You decide which ones to add. ( ͡° ͜ʖ ͡°)
+        </p>
+        <table style="width:100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 8px;">
+            <tr style="border-bottom: 1px solid rgba(148,163,184,0.4);">
+                <th style="text-align:left; padding:4px 6px;">Time (UTC)</th>
+                <th style="text-align:left; padding:4px 6px;">Token</th>
+                <th style="text-align:left; padding:4px 6px;">Source Tweet</th>
+            </tr>
+            {% for row in wishlist %}
+            <tr style="border-bottom: 1px solid rgba(30,41,59,0.6);">
+                <td style="padding:4px 6px;">{{ row.ts }}</td>
+                <td style="padding:4px 6px;"><code>{{ row.token }}</code></td>
+                <td style="padding:4px 6px; max-width:480px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                    {{ row.src }}
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p class="stat">
+            No wishlist tokens yet. Ask people to tweet things like<br>
+            <code>@{{ BOT_HANDLE }} mc lenny vs pepe</code> or unknown tokens to fill this list.
+        </p>
+    {% endif %}
+</div>
+
+<!-- ==========================
+     DAILY POST
+=========================== -->
+<div class="card">
+    <h2>$LENNY Daily Post</h2>
+    <p class="stat">
+        Starte einen manuellen, einmaligen $LENNY-Post über einen One-off Dyno.
+    </p>
+    <form method="post" action="{{ url_for('trigger_daily_post', key=key) }}">
+        <input type="hidden" name="key" value="{{ key }}">
+        <button class="btn" type="submit">🚀 Daily Post jetzt senden</button>
+    </form>
+    <small>Startet <code>python daily_post_now.py</code> in einem One-off Dyno.</small>
+</div>
+
+
+<!-- ==========================
      DAILY POST
 =========================== -->
 <div class="card">
@@ -908,6 +1014,7 @@ function toggleTheme() {
         bot_paused=bot_paused,
         lenny_stats=lenny_stats,
         global_stats=global_stats,
+        wishlist=wishlist,
         stats_date=stats_date,
         stats_total=stats_total,
         stats_mens=stats_mens,
@@ -1211,3 +1318,4 @@ if __name__ == "__main__":
         port=int(os.environ.get("PORT", 5000)),
         debug=True,
     )
+
