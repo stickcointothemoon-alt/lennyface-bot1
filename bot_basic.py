@@ -1457,6 +1457,59 @@ def _fix_grok_glitches(text: str) -> str:
     return text
 
 
+WISHLIST_FILE = "mc_compare_requests.txt"
+
+
+def load_mc_wishlist(limit: int = 50) -> list[dict]:
+    """
+    Liest die gespeicherten MC-Compare-Wunsch-Tokens aus der Datei.
+    Rückgabe: Liste von Dicts:
+      [
+        {"ts": "2025-11-26T22:03:07.985010Z", "token": "shiba", "src": "@..."},
+        ...
+      ]
+    """
+    if not os.path.exists(WISHLIST_FILE):
+        return []
+
+    rows: list[dict] = []
+    with open(WISHLIST_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Format: timestamp; token=XYZ; src=...
+            parts = line.split(";")
+            if not parts:
+                continue
+
+            ts = parts[0].strip()
+            token = None
+            src = None
+
+            for p in parts[1:]:
+                p = p.strip()
+                if p.startswith("token="):
+                    token = p[len("token="):]
+                elif p.startswith("src="):
+                    src = p[len("src="):]
+
+            if not token:
+                continue
+
+            rows.append({
+                "ts": ts,
+                "token": token,
+                "src": src or "",
+            })
+
+    # Neueste zuerst
+    rows.sort(key=lambda r: r["ts"], reverse=True)
+    return rows[:limit]
+
+
+
 
 def build_mc_compare_reply(src: str) -> str:
     """
@@ -1520,7 +1573,7 @@ def build_mc_compare_reply(src: str) -> str:
 
         # 2) Versuchen, in eine kleine Wunschliste-Datei zu schreiben
         try:
-            with open("mc_compare_requests.txt", "a", encoding="utf-8") as f:
+            with open(WISHLIST_FILE, "a", encoding="utf-8") as f:
                 f.write(f"{datetime.utcnow().isoformat()}Z; token={other_key}; src={src}\n")
         except Exception as e:
             log.warning("Could not append mc_compare_requests.txt: %s", e)
@@ -1538,6 +1591,7 @@ def build_mc_compare_reply(src: str) -> str:
                 f"I saved '{other_key}' as a wishlist token so the dev can add it later. "
                 f"( ͡° ͜ʖ ͡°)"
             )
+
 
     base_info = reg[base_key]
     other_info = reg[other_key]
