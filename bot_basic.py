@@ -1504,7 +1504,7 @@ def build_mc_compare_reply(src: str) -> str:
     if base_key not in reg:
         base_key = "lenny"  # Fallback
 
-     if other_key not in reg:
+    if other_key not in reg:
         # Token nicht konfiguriert → Wunsch merken + saubere Antwort senden
         known_others = [k for k in reg.keys() if k not in ("lenny", "lennyface")]
         known_str = ""
@@ -1538,7 +1538,6 @@ def build_mc_compare_reply(src: str) -> str:
                 f"I saved '{other_key}' as a wishlist token so the dev can add it later. "
                 f"( ͡° ͜ʖ ͡°)"
             )
-
 
     base_info = reg[base_key]
     other_info = reg[other_key]
