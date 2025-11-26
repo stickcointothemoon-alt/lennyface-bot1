@@ -1504,20 +1504,41 @@ def build_mc_compare_reply(src: str) -> str:
     if base_key not in reg:
         base_key = "lenny"  # Fallback
 
-    if other_key not in reg:
-        # Token nicht konfiguriert
+     if other_key not in reg:
+        # Token nicht konfiguriert → Wunsch merken + saubere Antwort senden
         known_others = [k for k in reg.keys() if k not in ("lenny", "lennyface")]
+        known_str = ""
         if known_others:
             known_str = ", ".join(sorted({reg[k]["symbol"] for k in known_others}))
+
+        # 1) In Logs sichtbar machen
+        log.info(
+            "Unconfigured MC-compare token requested: %s (src=%r)",
+            other_key,
+            src,
+        )
+
+        # 2) Versuchen, in eine kleine Wunschliste-Datei zu schreiben
+        try:
+            with open("mc_compare_requests.txt", "a", encoding="utf-8") as f:
+                f.write(f"{datetime.utcnow().isoformat()}Z; token={other_key}; src={src}\n")
+        except Exception as e:
+            log.warning("Could not append mc_compare_requests.txt: %s", e)
+
+        # 3) Antwort für den User
+        if known_str:
             return (
-                f"I can only compare $LENNY with configured tokens right now. "
-                f"Known: {known_str}. Set COMPARE_TOKEN_1_* in config for more. ( ͡° ͜ʖ ͡°)"
+                f"I can only compare $LENNY with a few configured tokens right now: "
+                f"{known_str}. I saved '{other_key}' as a wishlist token for the dev. "
+                f"( ͡° ͜ʖ ͡°)"
             )
         else:
             return (
-                "Right now I only know $LENNY for MC compare. "
-                "Add COMPARE_TOKEN_1_NAME / CA in config to compare with other coins. ( ͡° ͜ʖ ͡°)"
+                f"Right now I only know $LENNY for MC compare. "
+                f"I saved '{other_key}' as a wishlist token so the dev can add it later. "
+                f"( ͡° ͜ʖ ͡°)"
             )
+
 
     base_info = reg[base_key]
     other_info = reg[other_key]
