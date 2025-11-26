@@ -97,7 +97,7 @@ MEME_KEYWORDS_LENNY = [
 ]
 
 # ================================
-# LENNY FACE LIBRARY
+# LENNY FACE LIBRARY + SEASONS
 # ================================
 
 LENNY_BASE_FACES = [
@@ -126,7 +126,7 @@ LENNY_COPE_FACES = [
     "( ͡⚆ ͜ʖ ͡⚆)💊",
 ]
 
-# Saison-Faces – erstmal Platzhalter, später ausbauen
+# Saison-Faces
 LENNY_XMAS_FACES = [
     "( ͡° ͜ʖ ͡°)🎄",
     "( ͡° ͜ʖ ͡°)🎅",
@@ -136,6 +136,87 @@ LENNY_EASTER_FACES = [
     "( ͡° ͜ʖ ͡°)🥕",
     "( ͡° ͜ʖ ͡°)🐣",
 ]
+
+
+def current_lenny_season() -> str:
+    """
+    Liest die aktuelle Season.
+    - ENV LENNY_SEASON hat Priorität (xmas, easter, none)
+    - Optional: Auto-Xmas im Dezember
+    """
+    mode = os.environ.get("LENNY_SEASON", "").strip().lower()
+    if mode in ("xmas", "christmas"):
+        return "xmas"
+    if mode in ("easter", "ostern"):
+        return "easter"
+    if mode in ("none", "off"):
+        return "none"
+
+    # Auto-Season (falls kein ENV gesetzt)
+    today = datetime.utcnow()
+    if today.month == 12:
+        return "xmas"
+    return "none"
+
+
+def pick_lenny_face(mood: str = "base") -> str:
+    """Gibt ein Lennyface je nach 'mood' zurück."""
+    pools = {
+        "base":   LENNY_BASE_FACES,
+        "hype":   LENNY_HYPE_FACES,
+        "sad":    LENNY_SAD_FACES,
+        "cope":   LENNY_COPE_FACES,
+        "xmas":   LENNY_XMAS_FACES,
+        "easter": LENNY_EASTER_FACES,
+    }
+    pool = pools.get(mood, LENNY_BASE_FACES)
+    if not pool:
+        pool = LENNY_BASE_FACES
+    return random.choice(pool)
+
+
+def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
+    """
+    Hängt ein passendes Lennyface an den Reply an – abhängig von Season + Command.
+    Fügt nichts hinzu, wenn schon ein Lennyface im Text ist.
+    """
+    if not text:
+        return text
+
+    # Wenn schon irgendein ( ͡ im Text ist, nichts doppelt reinhauen
+    if "( ͡" in text:
+        return text
+
+    # 1) Season-Override
+    season = current_lenny_season()
+    if season == "xmas":
+        mood = "xmas"
+    elif season == "easter":
+        mood = "easter"
+    else:
+        # 2) Command-basierte Stimmung
+        if cmd_used in ("gm", "alpha"):
+            mood = "hype"
+        elif cmd_used == "roast":
+            mood = "cope"
+        elif cmd_used == "price":
+            lower = text.lower()
+            if any(k in lower for k in ["dump", "down", "red", "-%"]):
+                mood = "sad"
+            else:
+                mood = "hype"
+        elif cmd_used == "shill":
+            mood = random.choice(["base", "hype"])
+        else:
+            mood = "base"
+
+    face = pick_lenny_face(mood)
+
+    # Schön ans Ende anhängen
+    if text.endswith(("!", "?", ".")):
+        return text + " " + face
+    return text + " " + face
+
 
 # ================================
 # DIALEKT / TONE HELFER
