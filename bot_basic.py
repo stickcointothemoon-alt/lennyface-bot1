@@ -218,6 +218,7 @@ def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
     return text + " " + face
 
 
+
 # ================================
 # DIALEKT / TONE HELFER
 # ================================
