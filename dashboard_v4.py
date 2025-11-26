@@ -904,21 +904,6 @@ def render_dashboard(preview_text=None):
     {% endif %}
 </div>
 
-<!-- ==========================
-     DAILY POST
-=========================== -->
-<div class="card">
-    <h2>$LENNY Daily Post</h2>
-    <p class="stat">
-        Starte einen manuellen, einmaligen $LENNY-Post über einen One-off Dyno.
-    </p>
-    <form method="post" action="{{ url_for('trigger_daily_post', key=key) }}">
-        <input type="hidden" name="key" value="{{ key }}">
-        <button class="btn" type="submit">🚀 Daily Post jetzt senden</button>
-    </form>
-    <small>Startet <code>python daily_post_now.py</code> in einem One-off Dyno.</small>
-</div>
-
 
 <!-- ==========================
      DAILY POST
@@ -1318,4 +1303,5 @@ if __name__ == "__main__":
         port=int(os.environ.get("PORT", 5000)),
         debug=True,
     )
+
 
