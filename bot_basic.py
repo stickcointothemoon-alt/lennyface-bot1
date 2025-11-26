@@ -178,41 +178,56 @@ def pick_lenny_face(mood: str = "base") -> str:
 def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
     """
     Hängt ein passendes Lennyface an den Reply an – abhängig von Season + Command.
-    Fügt nichts hinzu, wenn schon ein Lennyface im Text ist.
+    - In Seasons (xmas/easter): existierende Lennyfaces werden durch Season-Faces ersetzt.
+    - Sonst: wenn schon ein Lennyface drin ist, lassen wir den Text so.
     """
     if not text:
         return text
 
-    # Wenn schon irgendein ( ͡ im Text ist, nichts doppelt reinhauen
-    if "( ͡" in text:
-        return text
+    has_lenny = "( ͡" in text
 
     # 1) Season-Override
-    season = current_lenny_season()
-    if season == "xmas":
-        mood = "xmas"
-    elif season == "easter":
-        mood = "easter"
-    else:
-        # 2) Command-basierte Stimmung
-        if cmd_used in ("gm", "alpha"):
-            mood = "hype"
-        elif cmd_used == "roast":
-            mood = "cope"
-        elif cmd_used == "price":
-            lower = text.lower()
-            if any(k in lower for k in ["dump", "down", "red", "-%"]):
-                mood = "sad"
-            else:
-                mood = "hype"
-        elif cmd_used == "shill":
-            mood = random.choice(["base", "hype"])
+    season = current_lenny_season()  # 'xmas', 'easter' oder 'none'
+
+    if season in ("xmas", "easter"):
+        # Season-Face auswählen
+        mood = season
+        face = pick_lenny_face(mood)
+
+        if has_lenny:
+            # Erstes vorhandenes Lenny-ähnliches Face durch Season-Face ersetzen
+            text = re.sub(r"\( ͡.*?͡.*?\)", face, text, count=1)
+            return text
+
+        # noch kein Lennyface → einfach anhängen
+        if text.endswith(("!", "?", ".")):
+            return text + " " + face
+        return text + " " + face
+
+    # --- Keine Season aktiv → normale Logik ---
+
+    if has_lenny:
+        # schon ein Face drin, nichts doppelt
+        return text
+
+    # Command-basierte Stimmung
+    if cmd_used in ("gm", "alpha"):
+        mood = "hype"
+    elif cmd_used == "roast":
+        mood = "cope"
+    elif cmd_used == "price":
+        lower = text.lower()
+        if any(k in lower for k in ["dump", "down", "red", "-%"]):
+            mood = "sad"
         else:
-            mood = "base"
+            mood = "hype"
+    elif cmd_used == "shill":
+        mood = random.choice(["base", "hype"])
+    else:
+        mood = "base"
 
     face = pick_lenny_face(mood)
 
-    # Schön ans Ende anhängen
     if text.endswith(("!", "?", ".")):
         return text + " " + face
     return text + " " + face
