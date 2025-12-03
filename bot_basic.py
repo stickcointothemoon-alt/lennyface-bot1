@@ -57,6 +57,14 @@ LENNY_TONE_MODE = os.environ.get("LENNY_TONE_MODE", "default").lower()
 # "default"  -> normales Lenny-English
 # "pk_en"    -> „pakistanisch angehauchter“ Degen-English-Style
 # später: "de_en", "es", etc.
+# Manueller Season-Override:
+# "", "auto"  → automatisch nach Datum
+# "xmas"      → Erzwinge Weihnachtsmodus
+# "easter"    → Erzwinge Ostern
+# "halloween" → Erzwinge Halloween
+# "off"/"none"/"0" → Immer ohne Season
+SEASON_OVERRIDE = os.environ.get("SEASON_OVERRIDE", "").strip().lower()
+
 
 
 # Auto Meme Mode (Dashboard Toggle)
@@ -131,24 +139,51 @@ LENNY_COPE_FACES = [
 LENNY_XMAS_FACES = [
     "( ͡° ͜ʖ ͡°)🎄",
     "( ͡° ͜ʖ ͡°)🎅",
+    "( ͡° ͜ʖ ͡°)❄️",
+    "( ͡° ͜ʖ ͡°)🎁",
+    "( ͡° ͜ʖ ͡°)✨",
+    "( ͡° ͜ʖ ͡°)⛄",
 ]
 
 LENNY_EASTER_FACES = [
-    "( ͡° ͜ʖ ͡°)🥕",
     "( ͡° ͜ʖ ͡°)🐣",
+    "( ͡° ͜ʖ ͡°)🥚",
+    "( ͡° ͜ʖ ͡°)🐰",
+    "( ͡° ͜ʖ ͡°)🌸",
 ]
 
 LENNY_HALLOWEEN_FACES = [
     "( ͡° ͜ʖ ͡°)🎃",
     "( ͡° ͜ʖ ͡°)👻",
+    "( ͡° ͜ʖ ͡°)🕯️",
+    "( ͡° ͜ʖ ͡°)🕷️",
+    "( ͡° ͜ʖ ͡°)🕸️",
+    "( ͡° ͜ʖ ͡°)💀",
 ]
+
+def _season_markers_for(season: str) -> list[str]:
+    """Nur die Emojis, damit wir doppelte Season-Anhänge vermeiden können."""
+    if season == "xmas":
+        return ["🎄", "🎅", "❄️", "🎁", "✨", "⛄", "🧦", "🔔", "🌟"]
+    if season == "easter":
+        return ["🐣", "🥚", "🐰", "🌸"]
+    if season == "halloween":
+        return ["🎃", "👻", "🕯️", "🕷️", "🕸️", "💀"]
+    return []
 
 
 def current_season() -> str | None:
     """
     Liefert 'xmas', 'easter', 'halloween' oder None.
-    Sehr simple Regeln, kannst du später feiner machen.
+    Nutzt zuerst SEASON_OVERRIDE, dann Datum.
     """
+    # 1) Manueller Override
+    if SEASON_OVERRIDE in ("xmas", "easter", "halloween"):
+        return SEASON_OVERRIDE
+    if SEASON_OVERRIDE in ("off", "none", "0"):
+        return None
+    # "", "auto" → Automatik
+
     try:
         today = datetime.now(timezone.utc).date()
     except Exception:
@@ -195,17 +230,6 @@ def pick_lenny_face(mood: str = "base", season: str | None = None) -> str:
     if not pool:
         pool = LENNY_BASE_FACES
     return random.choice(pool)
-
-
-def _season_markers_for(season: str) -> list[str]:
-    """Nur die Emojis, damit wir doppelte Season-Anhänge vermeiden können."""
-    if season == "xmas":
-        return ["🎄", "🎅"]
-    if season == "easter":
-        return ["🥕", "🐣"]
-    if season == "halloween":
-        return ["🎃", "👻"]
-    return []
 
 
 def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
