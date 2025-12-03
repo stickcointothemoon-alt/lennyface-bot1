@@ -96,6 +96,7 @@ MEME_KEYWORDS_LENNY = [
     # bewusst OHNE reines "( ͡° ͜ʖ ͡°)", sonst würde er ZU oft triggern
 ]
 
+
 # ================================
 # LENNY FACE LIBRARY + SEASONS
 # ================================
@@ -272,7 +273,7 @@ def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
         mood = "hype"
     elif cmd == "roast":
         mood = "cope"
-    elif cmd == "price" or cmd == "mc" or cmd == "mc_compare" or cmd == "stats" or cmd == "chart":
+    elif cmd in ("price", "mc", "mc_compare", "stats", "chart"):
         lower = text.lower()
         if any(k in lower for k in ["dump", "down", "red", "-%"]):
             mood = "sad"
@@ -288,9 +289,6 @@ def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
     if text.endswith(("!", "?", ".")):
         return text + " " + face
     return text + " " + face
-
-
-
 
 # ================================
 # DIALEKT / TONE HELFER
@@ -340,129 +338,6 @@ def apply_dialect(text: str, cmd_used: str | None) -> str:
 
     # später: weitere Modes, z.B. "de_en", "es", ...
     return text
-
-
-# =====================================
-# SEASON-DETECTION
-# =====================================
-
-def current_season() -> str | None:
-    """
-    Liefert 'xmas', 'easter' oder None.
-    Simple Regel:
-      - Dezember = Xmas
-      - Ende März bis Mitte April = Easter
-    Kannst du später fein-tunen.
-    """
-    try:
-        today = datetime.now(timezone.utc).date()
-    except Exception:
-        # Fallback ohne timezone, falls oben was anders importiert ist
-        today = datetime.utcnow().date()
-
-    m = today.month
-    d = today.day
-
-    # Weihnachten: ganzer Dezember
-    if m == 12:
-        return "xmas"
-
-    # Easter: grob Ende März – Mitte April
-    if (m == 3 and d >= 20) or (m == 4 and d <= 15):
-        return "easter"
-
-    return None
-
-
-
-def pick_lenny_face(mood: str = "base") -> str:
-    """Gibt ein Lennyface je nach 'mood' zurück."""
-    pools = {
-        "base":   LENNY_BASE_FACES,
-        "hype":   LENNY_HYPE_FACES,
-        "sad":    LENNY_SAD_FACES,
-        "cope":   LENNY_COPE_FACES,
-        "xmas":   LENNY_XMAS_FACES,
-        "easter": LENNY_EASTER_FACES,
-    }
-    pool = pools.get(mood, LENNY_BASE_FACES)
-    if not pool:
-        pool = LENNY_BASE_FACES
-    return random.choice(pool)
-
-from datetime import datetime, timezone  # falls noch nicht ganz oben importiert
-
-
-def apply_season_mood(base_mood: str) -> str:
-    """
-    Überschreibt die Stimmung je nach Season:
-    - Dezember  → xmas
-    - März/April → easter
-    Sonst bleibt base_mood.
-    """
-    try:
-        now = datetime.now(timezone.utc)
-        m = now.month
-    except Exception:
-        return base_mood
-
-    # Xmas Season
-    if m == 12:
-        return "xmas"
-    # Easter Season (ungefähr)
-    if m in (3, 4):
-        return "easter"
-
-    return base_mood
-
-
-
-def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
-    """
-    Hängt ein passendes Lennyface an den Reply an – abhängig vom Command
-    UND von der aktuellen Season (Xmas, Easter, ...).
-
-    Fügt NICHTS hinzu, wenn schon ein Lennyface im Text ist ("( ͡").
-    """
-    if not text:
-        return text
-
-    # Wenn schon irgendein Lennyface drin ist → nichts doppelt reinhauen
-    if "( ͡" in text:
-        return text
-
-    # 1) Season checken (override mood)
-    season = current_season()  # 'xmas', 'easter' oder None
-
-    if season in ("xmas", "easter"):
-        # In Seasons immer spezielle Lennyfaces nutzen
-        mood = season
-    else:
-        # 2) Normaler Mood nach Command
-        if cmd_used in ("gm", "alpha"):
-            mood = "hype"
-        elif cmd_used == "roast":
-            mood = "cope"
-        elif cmd_used == "price":
-            lower = text.lower()
-            if any(k in lower for k in ["dump", "down", "red", "-%"]):
-                mood = "sad"
-            else:
-                mood = "hype"
-        elif cmd_used == "shill":
-            mood = random.choice(["base", "hype"])
-        else:
-            mood = "base"
-
-    face = pick_lenny_face(mood)
-
-    # Schön ans Ende anhängen
-    if text.endswith(("!", "?", ".")):
-        return text + " " + face
-    return text + " " + face
-
-
-
 
 
 # Feature-Toggles (für Dashboard / Commands)
@@ -1822,19 +1697,20 @@ def fetch_user_tweets(user_id: str, since_id: str|None=None):
         log.warning("Fetch tweets failed for %s: %s", user_id, e)
         return []
 
-def fetch_mentions(my_user_id: str, since_id: str|None=None):
+def fetch_mentions(my_user_id: str, since_id: str | None = None):
     try:
         resp = client.get_users_mentions(
             id=my_user_id,
             since_id=since_id,
             max_results=10,
+            tweet_fields=["author_id", "created_at"],
         )
         if not resp or not resp.data:
             return []
         return list(resp.data)
     except tweepy.TweepyException as e:
         if "429" in str(e) or "Too Many Requests" in str(e):
-            log.warning("Rate limit exceeded. Sleeping for %d seconds.", LOOP_SLEEP_SECONDS)
+            log.warning("Fetch mentions rate limited. Sleeping for %d seconds.", LOOP_SLEEP_SECONDS)
             time.sleep(LOOP_SLEEP_SECONDS)
             return []
         log.warning("Fetch mentions failed: %s", e)
@@ -2055,7 +1931,13 @@ def main():
                         continue
 
                     # Anti-Repeat: pro User nur alle X Sekunden antworten
-                    author_id_str = str(tw.author_id)
+                    author_id = getattr(tw, "author_id", None)
+                    if author_id is None:
+                        log.warning("Mention %s has no author_id, using fallback key", tid)
+                        author_id_str = f"anon-{tid}"
+                    else:
+                        author_id_str = str(author_id)
+
                     if not can_reply_to_user(author_id_str):
                         log.info(
                             "Skip mention %s from user %s due to user cooldown (%ds)",
@@ -2066,7 +1948,7 @@ def main():
                         remember_and_maybe_backup(tid)
                         continue
 
-                   # --- Command-Erkennung mit Toggles ---
+                    # --- Command-Erkennung mit Toggles ---
                     src_lower = src.lower()
                     cmd_used = None  # für User-Memory
 
@@ -2162,18 +2044,24 @@ def main():
                         log.warning("Empty text from command '%s', using fallback.", cmd_used)
                         text = "My brain just lagged, degen. Try again in a sec. ( ͡° ͜ʖ ͡°)"
 
-                    # >>> NEU: Dialekt / Ton anpassen
-                    text = apply_dialect(text, cmd_used)
-                    # <<< ENDE NEU
+                    # eigenes Handle aus der Antwort entfernen (Grok baut oft @lennyface_bot ein)
+                    try:
+                        pattern = re.compile(rf"@{re.escape(BOT_HANDLE)}", re.IGNORECASE)
+                        text = pattern.sub("", text)
+                        text = re.sub(r"\s+", " ", text).strip()
+                    except Exception:
+                        pass
 
-                    # >>> LennyFace einbauen (Season + Mood)
+                    # Dialekt / Ton anpassen
+                    text = apply_dialect(text, cmd_used)
+
+                    # LennyFace + Season anhängen
                     text = decorate_with_lenny_face(text, cmd_used)
-                    # <<< ENDE
 
                     # User-Memory updaten
                     update_user_profile(author_id_str, cmd_used)
 
-                    # NEU: Unsichere Links aus der Antwort entfernen
+                    # Unsichere Links aus der Antwort entfernen
                     text = sanitize_reply_links(text)
 
                     # Danach personalisieren
@@ -2181,11 +2069,6 @@ def main():
 
                     # Meme-Entscheidung (smart)
                     with_meme = should_attach_meme(src, is_mention=True)
-
-
-
-
-
 
                     try:
                         post_reply(text, tid, with_meme)
@@ -2213,7 +2096,6 @@ def main():
                             log.warning("Reply fehlgeschlagen: %s", e)
                     except Exception as e:
                         log.warning("Reply fehlgeschlagen: %s", e)
-
 
             # 2) KOL Timelines
             now = time.time()
@@ -2254,7 +2136,6 @@ def main():
 
                     # Smart Meme Boost (für KOL-Tweets → is_mention=False)
                     with_meme = should_attach_meme(src_text, is_mention=False)
-
 
                     try:
                         post_reply(text, tid, with_meme)
