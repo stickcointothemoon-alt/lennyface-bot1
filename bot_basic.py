@@ -126,7 +126,7 @@ LENNY_COPE_FACES = [
     "( ͡⚆ ͜ʖ ͡⚆)💊",
 ]
 
-# Saison-Faces
+# Season Faces (ASCII + Emoji)
 LENNY_XMAS_FACES = [
     "( ͡° ͜ʖ ͡°)🎄",
     "( ͡° ͜ʖ ͡°)🎅",
@@ -137,142 +137,158 @@ LENNY_EASTER_FACES = [
     "( ͡° ͜ʖ ͡°)🐣",
 ]
 
+LENNY_HALLOWEEN_FACES = [
+    "( ͡° ͜ʖ ͡°)🎃",
+    "( ͡° ͜ʖ ͡°)👻",
+]
 
-def current_lenny_season() -> str:
+
+def current_season() -> str | None:
     """
-    Liest die aktuelle Season.
-    - ENV LENNY_SEASON hat Priorität (xmas, easter, none)
-    - Optional: Auto-Xmas im Dezember
+    Liefert 'xmas', 'easter', 'halloween' oder None.
+    Sehr simple Regeln, kannst du später feiner machen.
     """
-    mode = os.environ.get("LENNY_SEASON", "").strip().lower()
-    if mode in ("xmas", "christmas"):
+    try:
+        today = datetime.now(timezone.utc).date()
+    except Exception:
+        today = datetime.utcnow().date()
+
+    m = today.month
+    d = today.day
+
+    # Dezember = Weihnachten
+    if m == 12:
         return "xmas"
-    if mode in ("easter", "ostern"):
+
+    # Grob: Ende März – Mitte April = Ostern
+    if (m == 3 and d >= 20) or (m == 4 and d <= 15):
         return "easter"
-    if mode in ("none", "off"):
-        return "none"
 
-    # Auto-Season (falls kein ENV gesetzt)
-    today = datetime.utcnow()
-    if today.month == 12:
-        return "xmas"
-    return "none"
+    # Grob: Ende Oktober = Halloween
+    if m == 10 and d >= 20:
+        return "halloween"
+
+    return None
 
 
-def pick_lenny_face(mood: str = "base") -> str:
-    """Gibt ein Lennyface je nach 'mood' zurück."""
-    pools = {
-        "base":   LENNY_BASE_FACES,
-        "hype":   LENNY_HYPE_FACES,
-        "sad":    LENNY_SAD_FACES,
-        "cope":   LENNY_COPE_FACES,
-        "xmas":   LENNY_XMAS_FACES,
-        "easter": LENNY_EASTER_FACES,
-    }
-    pool = pools.get(mood, LENNY_BASE_FACES)
+def pick_lenny_face(mood: str = "base", season: str | None = None) -> str:
+    """
+    Basis-Auswahl + optional Season-Override.
+    Wenn Season aktiv ist, nehmen wir immer Season-Faces.
+    """
+    if season == "xmas":
+        pool = LENNY_XMAS_FACES
+    elif season == "easter":
+        pool = LENNY_EASTER_FACES
+    elif season == "halloween":
+        pool = LENNY_HALLOWEEN_FACES
+    else:
+        pools = {
+            "base":   LENNY_BASE_FACES,
+            "hype":   LENNY_HYPE_FACES,
+            "sad":    LENNY_SAD_FACES,
+            "cope":   LENNY_COPE_FACES,
+        }
+        pool = pools.get(mood, LENNY_BASE_FACES)
+
     if not pool:
         pool = LENNY_BASE_FACES
     return random.choice(pool)
 
 
+def _season_markers_for(season: str) -> list[str]:
+    """Nur die Emojis, damit wir doppelte Season-Anhänge vermeiden können."""
+    if season == "xmas":
+        return ["🎄", "🎅"]
+    if season == "easter":
+        return ["🥕", "🐣"]
+    if season == "halloween":
+        return ["🎃", "👻"]
+    return []
+
+
 def decorate_with_lenny_face(text: str, cmd_used: str | None) -> str:
     """
-    Hängt ein passendes Lennyface an den Reply an – abhängig vom Command
-    UND von der aktuellen Season (Xmas, Easter, ...).
+    Finaler Lenny-/Season-Dekorator.
 
-    LOGIK:
-    - In Xmas/Easter: IMMER ein Season-Lenny anhängen (🎄/🎅 bzw. 🥕/🐣),
-      auch wenn schon ein normales ( ͡° ͜ʖ ͡°) im Text ist.
-    - Außerhalb von Seasons: wenn schon ein ( ͡ im Text ist → nichts doppelt.
+    Regeln:
+    - JEDER Reply hat mindestens EIN Lennyface.
+    - Wenn Season (xmas/easter/halloween) aktiv ist:
+        → Antwort hat IMMER ein Season-Emoji.
+        → Wenn schon ( ͡° ͜ʖ ͡°) drin ist, hängen wir nur noch das Emoji an.
+        → Sonst nehmen wir ein Season-Lenny-Face (mit Emoji).
+    - Wenn KEINE Season:
+        → Wenn schon ( ͡ im Text → nichts doppelt.
+        → Sonst Mood je nach Command (gm/alpha/hype, roast/cope etc.).
     """
-
     if not text:
         return text
 
-    # Aktuelle Season bestimmen: 'xmas', 'easter' oder None
-    season = current_season()  # du hast current_season schon weiter oben definiert
+    cmd = (cmd_used or "").lower()
+    season = current_season()
 
     # -----------------------------
-    # SEASON-MODUS (XMAS / EASTER)
+    # SEASON-AKTIV (global, für alle Commands)
     # -----------------------------
-    if season in ("xmas", "easter"):
-        # Wenn schon ein Season-Emoji drin ist, nichts mehr tun
-        if season == "xmas":
-            season_markers = ["🎄", "🎅"]
-        else:
-            season_markers = ["🥕", "🐣"]
+    if season:
+        markers = _season_markers_for(season)
 
-        if any(m in text for m in season_markers):
-            return text  # Season ist schon im Text
-
-        # Mood = Season-Faces
-        mood = season
-
-        # Season-Lenny immer hinten anhängen – auch wenn schon ( ͡° ͜ʖ ͡°) im Text ist
-        face = pick_lenny_face(mood)
-
-        if text.endswith(("!", "?", ".")):
+        # Wenn schon ein Season-Emoji drin ist → passt, nichts tun
+        if any(m in text for m in markers):
+            # Sicherstellen, dass irgendwo ein Lennyface drin ist
+            if "( ͡" in text:
+                return text
+            # Kein Lenny drin → Season-Lenny dazu
+            face = pick_lenny_face("base", season=season)
+            if text.endswith(("!", "?", ".")):
+                return text + " " + face
             return text + " " + face
-        return text + " " + face
+
+        # Noch kein Season-Emoji im Text
+        if "( ͡" in text:
+            # Schon ein normales Lennyface → nur noch Season-Emoji anhängen
+            emo = random.choice(markers) if markers else ""
+            if not emo:
+                return text
+            if text.endswith(("!", "?", ".")):
+                return text + " " + emo
+            return text + " " + emo
+        else:
+            # Weder Lennyface noch Season → Season-Lenny anhängen (ASCII + Emoji)
+            face = pick_lenny_face("base", season=season)
+            if text.endswith(("!", "?", ".")):
+                return text + " " + face
+            return text + " " + face
 
     # -----------------------------
-    # NORMALER MODUS (KEINE SEASON)
+    # KEINE SEASON – normale Mood-Logik
     # -----------------------------
-    # Wenn schon irgendein Lennyface drin ist → nichts doppelt reinhauen
+    # Wenn schon irgendein Lennyface drin → so lassen
     if "( ͡" in text:
         return text
 
     # Mood je nach Command
-    if cmd_used in ("gm", "alpha"):
+    if cmd in ("gm", "alpha"):
         mood = "hype"
-    elif cmd_used == "roast":
+    elif cmd == "roast":
         mood = "cope"
-    elif cmd_used == "price":
+    elif cmd == "price" or cmd == "mc" or cmd == "mc_compare" or cmd == "stats" or cmd == "chart":
         lower = text.lower()
         if any(k in lower for k in ["dump", "down", "red", "-%"]):
             mood = "sad"
         else:
             mood = "hype"
-    elif cmd_used == "shill":
+    elif cmd == "shill":
         mood = random.choice(["base", "hype"])
     else:
         mood = "base"
 
-    face = pick_lenny_face(mood)
-
-    # Schön ans Ende anhängen
-    if text.endswith(("!", "?", ".")):
-        return text + " " + face
-    return text + " " + face
-
-
-    # --- Keine Season aktiv → normale Logik ---
-
-    if has_lenny:
-        # schon ein Face drin, nichts doppelt
-        return text
-
-    # Command-basierte Stimmung
-    if cmd_used in ("gm", "alpha"):
-        mood = "hype"
-    elif cmd_used == "roast":
-        mood = "cope"
-    elif cmd_used == "price":
-        lower = text.lower()
-        if any(k in lower for k in ["dump", "down", "red", "-%"]):
-            mood = "sad"
-        else:
-            mood = "hype"
-    elif cmd_used == "shill":
-        mood = random.choice(["base", "hype"])
-    else:
-        mood = "base"
-
-    face = pick_lenny_face(mood)
+    face = pick_lenny_face(mood, season=None)
 
     if text.endswith(("!", "?", ".")):
         return text + " " + face
     return text + " " + face
+
 
 
 
