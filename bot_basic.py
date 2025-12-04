@@ -2059,34 +2059,32 @@ def _estimate_sol_in_tx(tx: dict) -> float:
     except Exception:
         return 0.0
 
-import random
 
 # =========================
 # Whale-Tweets
 # =========================
 
 WHALE_TWEET_TEMPLATES = [
-    # A
-    "🐳 WHALE BUY DETECTED!\nA degen just splashed ~{sol:.2f} SOL into $LENNY.\nChads stack, jeets panic.",
+    # A – komplett neutral
+    "🐳 Whale activity spotted around $LENNY!\n~{sol:.2f} SOL just moved on-chain.\nSmirk up and watch the flows.",
     
-    # B
-    "🚨🐳 BIG LENNY BUY ALERT!\nSomeone aped in with ~{sol:.2f} SOL.\nWhales joining the party — moon loading.",
+    # B – eher bullish, aber kein „buy“
+    "🚨🐳 Big $LENNY move detected!\nAbout ~{sol:.2f} SOL just shifted.\nWhales don’t play small, degens.",
     
-    # C
-    "🐳💦 A whale just dropped ~{sol:.2f} SOL into $LENNY!\nSmirk up, pump season might be starting.",
+    # C – Meme / Flow-Style
+    "🐳💦 A whale just moved ~{sol:.2f} SOL in the $LENNY waters.\nSomething’s cooking… stay smirky.",
 ]
-
 
 def build_whale_tweet(sol_moved: float, signature: str) -> str:
     """
     Baut einen kurzen Whale-Tweet für $LENNY.
-    - sol_moved: geschätzte SOL-Menge
+    - sol_moved: geschätzte SOL-Menge (Bewegung, nicht garantiert Buy)
     - signature: TX-Signatur → Link zu Solscan
     """
     template = random.choice(WHALE_TWEET_TEMPLATES)
     base = template.format(sol=sol_moved)
 
-    # Season / Lenny-Deko
+    # Season / Lenny-Deko (macht z.B. XMAS-Emoji rein)
     base = decorate_with_lenny_face(base, cmd_used="whale")
 
     # Solscan-Link
@@ -2110,8 +2108,8 @@ def check_lenny_whales_once():
     Whale-Check:
     - fetch signatures via Helius
     - parse new ones
-    - detect big buys
-    - tweet if threshold exceeded
+    - detect big SOL moves
+    - tweet if threshold exceeded (HELIUS_MIN_BUY_SOL)
     """
     log.info(
         "Helius-check: api_key_set=%s, lenny_ca=%s, min_buy_sol=%.3f",
@@ -2163,7 +2161,7 @@ def check_lenny_whales_once():
             HELIUS_MIN_BUY_SOL,
         )
 
-        # Whale erkannt
+        # Whale-Aktivität
         if sol_moved >= HELIUS_MIN_BUY_SOL:
             log.info(
                 "🐳 Whale detected: signature=%s ~ %.3f SOL moved",
