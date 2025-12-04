@@ -2061,28 +2061,48 @@ def _estimate_sol_in_tx(tx: dict) -> float:
 
 import random
 
+# =========================
+# Whale-Tweets
+# =========================
+
 WHALE_TWEET_TEMPLATES = [
     # A
-    "🐳 **WHALE BUY DETECTED!**\nA degen just splashed **~{sol:.2f} SOL** into $LENNY!\nChads stack, jeets panic. ( ͡° ͜ʖ ͡°)🚀",
+    "🐳 WHALE BUY DETECTED!\nA degen just splashed ~{sol:.2f} SOL into $LENNY.\nChads stack, jeets panic.",
     
     # B
-    "🚨🐳 **BIG LENNY BUY ALERT!**\nSomeone aped in with **~{sol:.2f} SOL**.\nWhales joining the party — moon incoming! ( ͡° ͜ʖ ͡°)✨",
+    "🚨🐳 BIG LENNY BUY ALERT!\nSomeone aped in with ~{sol:.2f} SOL.\nWhales joining the party — moon loading.",
     
-    # C (Bonus)
-    "🐳💦 A whale just dropped **{sol:.2f} SOL** into $LENNY!\nBrace yourselves, pump season may begin. ( ͡° ͜ʖ ͡°)🎄"
+    # C
+    "🐳💦 A whale just dropped ~{sol:.2f} SOL into $LENNY!\nSmirk up, pump season might be starting.",
 ]
 
-def build_whale_tweet(sol_amount: float) -> str:
+
+def build_whale_tweet(sol_moved: float, signature: str) -> str:
+    """
+    Baut einen kurzen Whale-Tweet für $LENNY.
+    - sol_moved: geschätzte SOL-Menge
+    - signature: TX-Signatur → Link zu Solscan
+    """
     template = random.choice(WHALE_TWEET_TEMPLATES)
-    msg = template.format(sol=sol_amount)
+    base = template.format(sol=sol_moved)
 
-    # Season-Dekoration
-    msg = decorate_with_lenny_face(msg, cmd_used="whale")
+    # Season / Lenny-Deko
+    base = decorate_with_lenny_face(base, cmd_used="whale")
 
-    # Safety-Hinweise für X (positiv, Neutral)
-    msg += "\n#LENNY #Solana #CryptoAlerts"
-    return msg
+    # Solscan-Link
+    tx_url = f"https://solscan.io/tx/{signature}"
 
+    # Hashtags
+    base = base + "\n#LENNY #Solana #CryptoAlerts"
+
+    # Länge für X begrenzen
+    max_len = 280
+    reserved = len(tx_url) + 1  # Leerzeichen + URL
+
+    if len(base) + reserved > max_len:
+        base = base[: max_len - reserved].rstrip(" .,!-\n")
+
+    return f"{base} {tx_url}"
 
 
 def check_lenny_whales_once():
@@ -2143,7 +2163,7 @@ def check_lenny_whales_once():
             HELIUS_MIN_BUY_SOL,
         )
 
-        # Whale erkannt → jetzt Tweet erzeugen ❤️
+        # Whale erkannt
         if sol_moved >= HELIUS_MIN_BUY_SOL:
             log.info(
                 "🐳 Whale detected: signature=%s ~ %.3f SOL moved",
@@ -2151,43 +2171,19 @@ def check_lenny_whales_once():
                 sol_moved,
             )
 
-            try:
-                tweet_text = build_whale_tweet(sol_moved)
-                create_tweet(tweet_text)
-                log.info("🐳 Whale Tweet sent: %s", tweet_text)
-            except Exception as e:
-                log.error("Whale tweet failed: %s", e)
+            if HELIUS_WHALE_TWEETS_ENABLED:
+                try:
+                    tweet_text = build_whale_tweet(sol_moved, sig)
+                    client.create_tweet(text=tweet_text)
+                    log.info("🐳 Whale Tweet sent: %s", tweet_text)
+                except Exception as e:
+                    log.error("Whale tweet failed: %s", e)
 
         last_processed = sig
 
     if last_processed:
         _save_last_helius_sig(last_processed)
         log.info("Helius: last signature updated → %s", last_processed)
-
-
-
-def build_whale_tweet(sol_moved: float, signature: str) -> str:
-    """
-    Baut einen kurzen Whale-Tweet für $LENNY.
-    - sol_moved: geschätzte SOL-Menge
-    - signature: TX-Signatur → Link zu Solscan
-    """
-    tx_url = f"https://solscan.io/tx/{signature}"
-
-    base = (
-        f"🐳 Whale spotted in $LENNY! ~{sol_moved:.2f} SOL just ape’d in. "
-        f"Smirk and ride the wave ( ͡° ͜ʖ ͡°) #LENNY #Solana"
-    )
-
-    # Platz für URL lassen (Twitter zählt Links etwa als 23 Zeichen)
-    max_len = 280
-    reserved = len(tx_url) + 1  # Leerzeichen + URL
-
-    if len(base) + reserved > max_len:
-        base = base[: max_len - reserved].rstrip(" .,!-")
-
-    return f"{base} {tx_url}"
-
 
 # =========================
 # Main Loop
