@@ -408,8 +408,9 @@ DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 # --- Link-Sicherheit ---
 SAFE_LINK_DOMAINS = os.environ.get(
     "SAFE_LINK_DOMAINS",
-    "dexscreener.com,linktr.ee,x.com,twitter.com"
+    "dexscreener.com,linktr.ee,x.com,twitter.com,lennyface-bot-736b44838bb5.herokuapp.com,solscan.io"
 ).split(",")
+
 SAFE_LINK_DOMAINS = [d.strip().lower() for d in SAFE_LINK_DOMAINS if d.strip()]
 
 
@@ -2119,19 +2120,50 @@ def check_lenny_whales_once():
             HELIUS_MIN_BUY_SOL,
         )
 
-        if sol_moved >= HELIUS_MIN_BUY_SOL:
-            log.info(
+         if sol_moved >= HELIUS_MIN_BUY_SOL:
+             log.info(
                 "🐳 Possible whale TX: signature=%s ~ %.3f SOL moved (threshold=%.3f)",
                 sig,
                 sol_moved,
                 HELIUS_MIN_BUY_SOL,
             )
-            # später: hier Tweet bauen + create_tweet()
+
+            if HELIUS_WHALE_TWEETS_ENABLED:
+                try:
+                    tweet_text = build_whale_tweet(sol_moved, sig)
+                    client.create_tweet(text=tweet_text)
+                    log.info("Helius: whale tweet sent for %s", sig)
+                except Exception as e:
+                    log.warning("Helius: whale tweet failed for %s: %s", sig, e)
 
         last_processed = sig
 
+
     if last_processed:
         _save_last_helius_sig(last_processed)
+
+def build_whale_tweet(sol_moved: float, signature: str) -> str:
+    """
+    Baut einen kurzen Whale-Tweet für $LENNY.
+    - sol_moved: geschätzte SOL-Menge
+    - signature: TX-Signatur → Link zu Solscan
+    """
+    tx_url = f"https://solscan.io/tx/{signature}"
+
+    base = (
+        f"🐳 Whale spotted in $LENNY! ~{sol_moved:.2f} SOL just ape’d in. "
+        f"Smirk and ride the wave ( ͡° ͜ʖ ͡°) #LENNY #Solana"
+    )
+
+    # Platz für URL lassen (Twitter zählt Links etwa als 23 Zeichen)
+    max_len = 280
+    reserved = len(tx_url) + 1  # Leerzeichen + URL
+
+    if len(base) + reserved > max_len:
+        base = base[: max_len - reserved].rstrip(" .,!-")
+
+    return f"{base} {tx_url}"
+
 
 # =========================
 # Main Loop
