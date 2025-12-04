@@ -407,9 +407,10 @@ DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 # --- Link-Sicherheit ---
 SAFE_LINK_DOMAINS = os.environ.get(
     "SAFE_LINK_DOMAINS",
-    "dexscreener.com,linktr.ee"
+    "dexscreener.com,linktr.ee,t.co,x.com,twitter.com,pic.twitter.com"
 ).split(",")
 SAFE_LINK_DOMAINS = [d.strip().lower() for d in SAFE_LINK_DOMAINS if d.strip()]
+
 
 
 # =====================================
@@ -830,14 +831,29 @@ def has_suspicious_link(text: str) -> bool:
     """
     True, wenn im Text irgendein Link ist,
     der NICHT in SAFE_LINK_DOMAINS liegt.
+    Twitter-eigene Links (t.co / x.com / twitter.com / pic.twitter.com)
+    werden immer als safe behandelt, damit Memes & normale Tweets nicht
+    fälschlich als Scam gewertet werden.
     """
     urls = extract_urls(text)
     if not urls:
         return False
 
     for u in urls:
+        try:
+            parsed = urlparse(u)
+            host = (parsed.netloc or "").lower()
+        except Exception:
+            # Wenn wir die URL nicht parsen können → lieber vorsichtig sein
+            return True
+
+        # Twitter / X eigene URLs immer erlauben
+        if host in ("t.co", "x.com", "twitter.com", "pic.twitter.com"):
+            continue
+
         if not is_safe_url(u):
             return True
+
     return False
 
 
