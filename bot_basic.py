@@ -1989,6 +1989,7 @@ def _helius_fetch_recent_txs(limit: int = 50) -> list[dict]:
         r.raise_for_status()
         data = r.json() or {}
         result = data.get("result") or []
+        log.info("Helius: fetched %d signatures for %s", len(result), LENNY_TOKEN_CA)
         return result
     except Exception as e:
         log.warning("Helius getSignaturesForAddress failed: %s", e)
@@ -2059,6 +2060,13 @@ def check_lenny_whales_once():
     - loggt große Bewegungen (> HELIUS_MIN_BUY_SOL)
     Für den Anfang NUR Logs, keine Tweets.
     """
+    log.info(
+        "Helius-check: api_key_set=%s, lenny_ca=%s, min_buy_sol=%.3f",
+        bool(HELIUS_API_KEY),
+        LENNY_TOKEN_CA,
+        HELIUS_MIN_BUY_SOL,
+    )
+
     if not HELIUS_API_KEY or not LENNY_TOKEN_CA:
         log.info("Helius or LENNY_TOKEN_CA missing → whale watcher inactive.")
         return
