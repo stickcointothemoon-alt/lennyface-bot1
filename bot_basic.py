@@ -407,10 +407,9 @@ DEX_TOKEN_URL  = os.environ.get("DEX_TOKEN_URL", "").strip()
 # --- Link-Sicherheit ---
 SAFE_LINK_DOMAINS = os.environ.get(
     "SAFE_LINK_DOMAINS",
-    "dexscreener.com,linktr.ee,t.co,x.com,twitter.com,pic.twitter.com"
+    "dexscreener.com,linktr.ee,x.com,twitter.com"
 ).split(",")
 SAFE_LINK_DOMAINS = [d.strip().lower() for d in SAFE_LINK_DOMAINS if d.strip()]
-
 
 
 # =====================================
@@ -793,9 +792,52 @@ from urllib.parse import urlparse
 
 URL_REGEX = re.compile(r"https?://\S+", re.IGNORECASE)
 
-# SAFE_LINK_DOMAINS wird oben bei den ENV-Variablen gesetzt:
-# SAFE_LINK_DOMAINS = os.environ.get("SAFE_LINK_DOMAINS", "dexscreener.com,linktr.ee").split(",")
-# SAFE_LINK_DOMAINS = [d.strip().lower() for d in SAFE_LINK_DOMAINS if d.strip()]
+# Default-Whitelist:
+# - dexscreener.com  → dein Chart-Link
+# - linktr.ee        → Linktree
+# - x.com/twitter.com→ normale X-Posts + Medien
+# - lennyface-bot-736b44838bb5.herokuapp.com → dein eigener Bot-Link
+SAFE_LINK_DOMAINS = os.environ.get(
+    "SAFE_LINK_DOMAINS",
+    "dexscreener.com,linktr.ee,x.com,twitter.com,lennyface-bot-736b44838bb5.herokuapp.com"
+).split(",")
+SAFE_LINK_DOMAINS = [d.strip().lower() for d in SAFE_LINK_DOMAINS if d.strip()]
+
+
+def _resolve_final_host(url: str) -> str | None:
+    """
+    Versucht bei Kurzlinks (z.B. t.co) die finale Ziel-Domain zu ermitteln.
+    Gibt z.B. 'x.com' oder 'dexscreener.com' zurück.
+    """
+    try:
+        r = requests.head(url, allow_redirects=True, timeout=5)
+        final_url = r.url
+        parsed = urlparse(final_url)
+        host = (parsed.netloc or "").lower()
+        return host or None
+    except Exception:
+        return None
+
+
+def _get_effective_host(url: str) -> str | None:
+    """
+    Holt die Domain eines Links.
+    Bei t.co wird versucht, auf die echte Ziel-Domain aufzulösen.
+    """
+    try:
+        parsed = urlparse(url)
+        host = (parsed.netloc or "").lower()
+        if not host:
+            return None
+
+        # t.co → versuch, echte Ziel-Domain zu holen
+        if host == "t.co":
+            resolved = _resolve_final_host(url)
+            if resolved:
+                return resolved
+        return host
+    except Exception:
+        return None
 
 
 def extract_urls(text: str) -> list[str]:
@@ -806,61 +848,41 @@ def extract_urls(text: str) -> list[str]:
 
 def is_safe_url(url: str) -> bool:
     """
-    True, wenn die Domain in SAFE_LINK_DOMAINS whitelisted ist.
-    Alles andere → unsicher.
+    True, wenn die Domain (nach evt. Redirect) in SAFE_LINK_DOMAINS whitelisted ist.
     """
-    try:
-        parsed = urlparse(url)
-        host = (parsed.netloc or "").lower()
-        if not host:
-            return False
+    host = _get_effective_host(url)
+    if not host:
+        return False
 
-        for dom in SAFE_LINK_DOMAINS:
-            dom = dom.strip().lower()
-            if not dom:
-                continue
-            # exakte Domain oder Subdomain
-            if host == dom or host.endswith("." + dom):
-                return True
-        return False
-    except Exception:
-        return False
+    for dom in SAFE_LINK_DOMAINS:
+        dom = dom.strip().lower()
+        if not dom:
+            continue
+        # exakte Domain oder Subdomain
+        if host == dom or host.endswith("." + dom):
+            return True
+    return False
 
 
 def has_suspicious_link(text: str) -> bool:
     """
     True, wenn im Text irgendein Link ist,
     der NICHT in SAFE_LINK_DOMAINS liegt.
-    Twitter-eigene Links (t.co / x.com / twitter.com / pic.twitter.com)
-    werden immer als safe behandelt, damit Memes & normale Tweets nicht
-    fälschlich als Scam gewertet werden.
     """
     urls = extract_urls(text)
     if not urls:
         return False
 
     for u in urls:
-        try:
-            parsed = urlparse(u)
-            host = (parsed.netloc or "").lower()
-        except Exception:
-            # Wenn wir die URL nicht parsen können → lieber vorsichtig sein
-            return True
-
-        # Twitter / X eigene URLs immer erlauben
-        if host in ("t.co", "x.com", "twitter.com", "pic.twitter.com"):
-            continue
-
         if not is_safe_url(u):
             return True
-
     return False
 
 
 def sanitize_reply_links(text: str) -> str:
     """
     Entfernt ALLE Links aus der Antwort, die nicht whitelisted sind.
-    Dexscreener + Linktree bleiben erhalten (über SAFE_LINK_DOMAINS).
+    Dexscreener + Linktree + X bleiben erhalten (über SAFE_LINK_DOMAINS).
     """
     if not text:
         return text
@@ -878,29 +900,22 @@ def build_scam_warning_reply(src: str) -> str:
     """
     Standard-Reply bei verdächtigen Links.
     Kein Repost des Links, rotierende sichere Antworten.
-    Keine riskanten Begriffe (X Safety).
     Immer mit $LENNY + Lennyface.
     """
 
     options = [
         "Easy there, degen. Random links can drain bags real quick. Stick to Dexscreener + official $LENNY links only. ( ͡° ͜ʖ ͡°)",
-
         "Careful fren — mystery links are how wallets go *bye bye*. Only trust Dexscreener + official $LENNY sources. ( ͡° ͜ʖ ͡°)",
-
         "Unknown links = danger zone. Protect those bags and use only Dexscreener + official $LENNY links. Stay safe, stay smirkin’. ( ͡° ͜ʖ ͡°)",
-
         "Random links? Nah fam. That’s a fast-track to getting rugged. Official $LENNY links + Dexscreener only. ( ͡° ͜ʖ ͡°)",
-
         "Fren, clicking mystery links is like signing a blank check. Keep it clean: Dexscreener + official $LENNY links only. ( ͡° ͜ʖ ͡°)",
-
         "Heads up — shady links love fresh wallets. Trust only Dexscreener + verified $LENNY sources. Smirk responsibly. ( ͡° ͜ʖ ͡°)",
-
         "Yo, that link looks spicier than it should. Avoid getting cooked — use Dexscreener + official $LENNY links only. ( ͡° ͜ʖ ͡°)",
-
         "Hold up degen — before you click anything, remember mystery links = instant regret. Stick to official $LENNY + Dexscreener. ( ͡° ͜ʖ ͡°)",
     ]
 
     return random.choice(options)
+
 
 
 # =========================
