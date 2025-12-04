@@ -6,6 +6,7 @@ import random
 import logging
 import requests
 import traceback
+import math
 from datetime import datetime, timezone, timedelta
 
 import tweepy  # v4.14.0
@@ -1915,6 +1916,201 @@ def build_roast_reply(context_snippet: str = "") -> str:
     ]
     return random.choice(templates)
 
+# =========================
+# Helius – Whale Watcher
+# =========================
+
+HELIUS_API_KEY       = os.environ.get("HELIUS_API_KEY", "").strip()
+HELIUS_POLL_SECONDS  = int(os.environ.get("HELIUS_POLL_SECONDS", "45"))
+HELIUS_MIN_BUY_SOL   = float(os.environ.get("HELIUS_MIN_BUY_SOL", "5"))  # ab wie viel SOL = Whale
+HELIUS_LAST_SIG_ENV  = "HELIUS_LAST_SIGNATURE"
+
+# optional: für später, wenn wir Tweets schicken wollen
+HELIUS_WHALE_TWEETS_ENABLED = os.environ.get("HELIUS_WHALE_TWEETS_ENABLED", "0") == "1"
+
+# Pump/Raydium etc. – wir starten erst mal einfach mit "alle Transfers in den Lenny-Pool"
+# Dafür brauchen wir den Pool-Account, aber fürs MVP zeigen wir nur Logs.
+
+def _get_helius_base_url() -> str:
+    """
+    Standard-RPC Endpoint von Helius für parsed transactions.
+    """
+    if not HELIUS_API_KEY:
+        return ""
+    return f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+
+
+def _load_last_helius_sig() -> str | None:
+    """
+    Letzte verarbeitete Signature aus ENV lesen (wenn vorhanden).
+    """
+    return os.environ.get(HELIUS_LAST_SIG_ENV, "").strip() or None
+
+
+def _save_last_helius_sig(sig: str):
+    """
+    Letzte Signature in Heroku Config Vars speichern, damit sie beim nächsten Dyno-Start nicht verloren geht.
+    """
+    if not sig:
+        return
+    try:
+        _set_config_vars({HELIUS_LAST_SIG_ENV: sig})
+        log.info("Helius: last signature updated → %s", sig)
+    except Exception as e:
+        log.warning("Helius: could not save last signature: %s", e)
+
+
+def _helius_fetch_recent_txs(limit: int = 50) -> list[dict]:
+    """
+    Holt die letzten Transaktionen für das $LENNY Mint über Helius.
+    Für MVP: wir holen einfach alle Transaktionen, später filtern wir gezielter auf Pool/DEX.
+    """
+    if not HELIUS_API_KEY or not LENNY_TOKEN_CA:
+        return []
+
+    url = _get_helius_base_url()
+    if not url:
+        return []
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "lenny-whales",
+        "method": "getSignaturesForAddress",
+        "params": [
+            LENNY_TOKEN_CA,
+            {
+                "limit": limit
+            }
+        ]
+    }
+
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        r.raise_for_status()
+        data = r.json() or {}
+        result = data.get("result") or []
+        return result
+    except Exception as e:
+        log.warning("Helius getSignaturesForAddress failed: %s", e)
+        return []
+
+
+def _helius_get_parsed_tx(signature: str) -> dict | None:
+    """
+    Holt die parsed Transaction für eine Signatur.
+    """
+    if not HELIUS_API_KEY:
+        return None
+
+    url = _get_helius_base_url()
+    if not url:
+        return None
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "lenny-whales-tx",
+        "method": "getTransaction",
+        "params": [
+            signature,
+            {
+                "encoding": "jsonParsed",
+                "maxSupportedTransactionVersion": 0
+            }
+        ]
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=15)
+        r.raise_for_status()
+        data = r.json() or {}
+        return data.get("result") or None
+    except Exception as e:
+        log.warning("Helius getTransaction failed for %s: %s", signature, e)
+        return None
+
+
+def _estimate_sol_in_tx(tx: dict) -> float:
+    """
+    Grobe Heuristik: wie viel SOL wurde ungefähr in dieser TX bewegt?
+    Wir schauen auf preBalance/ postBalance der Fee-Payer.
+    (MVP – später können wir genauer auf DEX-Pools gehen.)
+    """
+    try:
+        meta = tx.get("meta") or {}
+        pre = meta.get("preBalances") or []
+        post = meta.get("postBalances") or []
+        if not pre or not post:
+            return 0.0
+        # nur Index 0 (Fee-Payer)
+        sol_before = pre[0] / 1e9
+        sol_after  = post[0] / 1e9
+        diff = sol_before - sol_after
+        if diff < 0:
+            diff = -diff
+        return diff
+    except Exception:
+        return 0.0
+
+
+def check_lenny_whales_once():
+    """
+    Einmaligen Whale-Check ausführen:
+    - holt letzte Signaturen
+    - stoppt, sobald wir die bekannte last_signature erreicht haben
+    - loggt große Bewegungen (> HELIUS_MIN_BUY_SOL)
+    Für den Anfang NUR Logs, keine Tweets.
+    """
+    if not HELIUS_API_KEY or not LENNY_TOKEN_CA:
+        log.info("Helius or LENNY_TOKEN_CA missing → whale watcher inactive.")
+        return
+
+    last_known_sig = _load_last_helius_sig()
+    sigs = _helius_fetch_recent_txs(limit=30)
+    if not sigs:
+        return
+
+    # Neueste zuerst → wir gehen von hinten nach vorne, damit wir chronologisch loggen
+    new_sigs = []
+    for row in sigs:
+        sig = row.get("signature") or row.get("signature", None)
+        if not sig:
+            continue
+        if last_known_sig and sig == last_known_sig:
+            # ab hier alles schon bekannt
+            break
+        new_sigs.append(sig)
+
+    if not new_sigs:
+        return
+
+    # Reihenfolge drehen: älteste zuerst verarbeiten
+    new_sigs = list(reversed(new_sigs))
+
+    log.info("Helius: checking %d new signatures for whales", len(new_sigs))
+
+    last_processed = None
+
+    for sig in new_sigs:
+        tx = _helius_get_parsed_tx(sig)
+        if not tx:
+            continue
+
+        sol_moved = _estimate_sol_in_tx(tx)
+        if sol_moved >= HELIUS_MIN_BUY_SOL:
+            # MVP: nur ins Log
+            log.info(
+                "🐳 Possible whale TX: signature=%s ~ %.3f SOL moved (threshold=%.3f)",
+                sig,
+                sol_moved,
+                HELIUS_MIN_BUY_SOL,
+            )
+            # später: hier Tweet bauen + create_tweet()
+
+        last_processed = sig
+
+    if last_processed:
+        _save_last_helius_sig(last_processed)
+
+
 
 # =========================
 # Main Loop
@@ -2216,6 +2412,13 @@ def main():
                             log.warning("Reply fehlgeschlagen: %s", e)
                     except Exception as e:
                         log.warning("Reply fehlgeschlagen: %s", e)
+
+            # 3) Whale-Check (MVP – nur Logs)
+            try:
+                check_lenny_whales_once()
+            except Exception as e:
+                log.warning("Helius whale-check failed: %s", e)
+
 
             # Hauptschlaf am Ende der Schleife
             time.sleep(LOOP_SLEEP_SECONDS)
