@@ -2098,22 +2098,31 @@ def check_lenny_whales_once():
     last_processed = None
 
     for sig in new_sigs:
-        tx = _helius_get_parsed_tx(sig)
-        if not tx:
-            continue
+    tx = _helius_get_parsed_tx(sig)
+    if not tx:
+        continue
 
-        sol_moved = _estimate_sol_in_tx(tx)
-        if sol_moved >= HELIUS_MIN_BUY_SOL:
-            # MVP: nur ins Log
-            log.info(
-                "🐳 Possible whale TX: signature=%s ~ %.3f SOL moved (threshold=%.3f)",
-                sig,
-                sol_moved,
-                HELIUS_MIN_BUY_SOL,
-            )
-            # später: hier Tweet bauen + create_tweet()
+    sol_moved = _estimate_sol_in_tx(tx)
 
-        last_processed = sig
+    # Debug: immer loggen, auch wenn es kein Whale ist
+    log.info(
+        "Helius TX: signature=%s ~ %.4f SOL moved (threshold=%.3f)",
+        sig,
+        sol_moved,
+        HELIUS_MIN_BUY_SOL,
+    )
+
+    if sol_moved >= HELIUS_MIN_BUY_SOL:
+        log.info(
+            "🐳 Possible whale TX: signature=%s ~ %.3f SOL moved (threshold=%.3f)",
+            sig,
+            sol_moved,
+            HELIUS_MIN_BUY_SOL,
+        )
+        # später: hier Tweet bauen + create_tweet()
+
+    last_processed = sig
+
 
     if last_processed:
         _save_last_helius_sig(last_processed)
