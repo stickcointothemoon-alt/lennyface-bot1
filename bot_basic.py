@@ -1932,6 +1932,25 @@ HELIUS_WHALE_TWEETS_ENABLED = os.environ.get("HELIUS_WHALE_TWEETS_ENABLED", "0")
 # Pump/Raydium etc. – wir starten erst mal einfach mit "alle Transfers in den Lenny-Pool"
 # Dafür brauchen wir den Pool-Account, aber fürs MVP zeigen wir nur Logs.
 
+# Helius – Whale Watcher
+HELIUS_API_KEY       = os.environ.get("HELIUS_API_KEY", "").strip()
+HELIUS_POLL_SECONDS  = int(os.environ.get("HELIUS_POLL_SECONDS", "45"))
+
+# MIN-Buy / Sell (delta in SOL)
+HELIUS_MIN_BUY_SOL   = float(os.environ.get("HELIUS_MIN_BUY_SOL", "2.0"))   # z.B. 2 SOL
+HELIUS_MIN_SELL_SOL  = float(os.environ.get("HELIUS_MIN_SELL_SOL", "5.0"))  # großer Dump, z.B. 5 SOL
+
+HELIUS_LAST_SIG_ENV  = "HELIUS_LAST_SIGNATURE"
+
+# Tweets für Whales
+HELIUS_WHALE_TWEETS_ENABLED      = os.environ.get("HELIUS_WHALE_TWEETS_ENABLED", "1") == "1"
+HELIUS_WHALE_SELL_TWEETS_ENABLED = os.environ.get("HELIUS_WHALE_SELL_TWEETS_ENABLED", "0") == "1"
+
+# In-Memory Anti-Spam für TXs (damit wir dieselbe Signatur nicht dauernd verarbeiten)
+WHALE_SEEN_SIGS: set[str] = set()
+MAX_WHALE_SEEN = 500
+
+
 def _get_helius_base_url() -> str:
     """
     Standard-RPC Endpoint von Helius für parsed transactions.
@@ -2061,77 +2080,98 @@ def _estimate_sol_in_tx(tx: dict) -> float:
     except Exception:
         return 0.0
 
-
-
-
 # =========================
 # Whale-Tweets
 # =========================
+import random
 
 WHALE_TWEET_TEMPLATES_BUY = [
-    "🐳 WHALE BUY DETECTED!\nA degen just splashed ~{sol:.2f} SOL into $LENNY.\nChads stack, jeets panic.",
-    "🚨🐳 BIG LENNY BUY ALERT!\nSomeone aped in with ~{sol:.2f} SOL.\nWhales joining the party — moon loading.",
-    "🐳💦 A whale just dropped ~{sol:.2f} SOL into $LENNY!\nSmirk up, pump season might be starting.",
+    "Whale aped ~{sol:.2f} SOL into $LENNY! Moon mission fueled, degens—LFG! 🚀 #LENNY #SolanaSzn",
+    "🐳 Big smirk energy: ~{sol:.2f} SOL just slammed into $LENNY. Chads stack, jeets cope.",
+    "Fresh whale just dropped ~{sol:.2f} SOL on $LENNY. Smirk, sip, enjoy the green candles.",
 ]
 
-# (optional, nur fürs Logging / späteres Feature – aktuell KEINE Tweets für Sells)
 WHALE_TWEET_TEMPLATES_SELL = [
-    "🐳 Whale took ~{sol:.2f} SOL off the table.\nChads don’t panic, they smirk and keep stacking $LENNY.",
-    "🐳 Profit taker spotted: ~{sol:.2f} SOL out.\nMarkets breathe, memes stay. $LENNY still smirking.",
+    "Whale dumped ~{sol:.2f} SOL out of $LENNY. Jeets shaking, chads farming dip entries. 🫠",
+    "🐳 Exit liquidity moment: ~{sol:.2f} SOL sell. Strong hands treat this as coupons.",
+    "Someone just offloaded ~{sol:.2f} SOL. If you’re still here, you’re the real degen.",
 ]
 
 
-def build_whale_tweet(sol_moved: float, signature: str, is_buy: bool = True) -> str:
+def build_whale_tweet(sol_delta: float, signature: str, kind: str = "buy") -> str:
     """
-    Baut einen kurzen Whale-Tweet für $LENNY.
-    - sol_moved: Betrag (immer POSITIV)
-    - signature: TX-Signatur → Solscan-Link
-    - is_buy: True = Buy-Whale, False = Sell-Whale (aktuell twittern wir nur Buys)
+    sol_delta > 0  → BUY
+    sol_delta < 0  → SELL
+    kind: 'buy' oder 'sell'
     """
-    # 1) Versuche Grok für mehr Variety
-    base = ""
-    if GROK_API_KEY:
-        try:
-            direction_word = "buy" if is_buy else "sell"
-            prompt = (
-                "Write ONE short, degen-style line for Crypto Twitter about a whale {dir} "
-                "of ~{amount:.2f} SOL in the $LENNY token.\n"
-                "- max 180 characters\n"
-                "- no links, no @mentions\n"
-                "- no Lennyface, it will be added later\n"
-                "- keep the vibe positive / hype, no FUD."
-            ).format(dir=direction_word, amount=sol_moved)
+    amount = abs(sol_delta)
 
-            grok = grok_generate(prompt) or ""
-            grok = re.sub(r"\s+", " ", grok).strip()
-            base = grok
+    # 1) Textbasis: erst Grok versuchen, dann Fallback-Template
+    base = ""
+
+    if GROK_API_KEY:
+        mood = (
+            "bullish, hype but no promises, celebrate the buy"
+            if kind == "buy"
+            else "calm, shrug off the sell, still degen and optimistic"
+        )
+
+        prompt = (
+            "Write ONE short degen-style Twitter line about a whale trade in $LENNY.\n"
+            f"- Type: {kind.upper()}\n"
+            f"- Amount: ~{amount:.2f} SOL\n"
+            f"- Tone: {mood}\n"
+            "- Max 200 characters.\n"
+            "- No links, no @mentions.\n"
+            "- Do NOT include any Lennyface, that will be added later.\n"
+            "- Use 1–2 relevant hashtags like #LENNY #Solana.\n"
+        )
+
+        try:
+            base = grok_generate(prompt) or ""
+            base = re.sub(r"\s+", " ", base).strip()
         except Exception as e:
             log.warning("Grok whale text failed: %s", e)
             base = ""
 
-    # 2) Fallback auf feste Templates
     if not base:
-        if is_buy:
+        # Fallback-Templates
+        if kind == "buy":
             template = random.choice(WHALE_TWEET_TEMPLATES_BUY)
         else:
             template = random.choice(WHALE_TWEET_TEMPLATES_SELL)
-        base = template.format(sol=sol_moved)
+        base = template.format(sol=amount)
 
-    # 3) Lenny / Season-Deko
+    # 2) Lennyface + Season (aber nicht doppelt)
     base = decorate_with_lenny_face(base, cmd_used="whale")
 
-    # 4) Hashtags + Solscan-Link
-    tx_url = f"https://solscan.io/tx/{signature}"
-    base = base + "\n#LENNY #Solana #CryptoAlerts"
+    # 3) Standard-Hashtags, falls Grok keine hat
+    if "#LENNY" not in base.upper():
+        base += " #LENNY"
+    if "#Solana" not in base and "#SOLANA" not in base.upper():
+        base += " #Solana"
 
-    # 5) Länge für X begrenzen
+    # 4) Solscan-Link anhängen
+    tx_url = f"https://solscan.io/tx/{signature}"
+
     max_len = 280
     reserved = len(tx_url) + 1  # Leerzeichen + URL
+
     if len(base) + reserved > max_len:
         base = base[: max_len - reserved].rstrip(" .,!-\n")
 
     return f"{base} {tx_url}"
 
+
+def _remember_whale_sig(sig: str):
+    """Merk dir, welche Signaturen wir schon verarbeitet haben (Anti-Doppel-Log)."""
+    try:
+        WHALE_SEEN_SIGS.add(sig)
+        if len(WHALE_SEEN_SIGS) > MAX_WHALE_SEEN:
+            # irgendeinen alten rauswerfen
+            WHALE_SEEN_SIGS.pop()
+    except Exception:
+        pass
 
 
 def check_lenny_whales_once():
@@ -2139,8 +2179,8 @@ def check_lenny_whales_once():
     Whale-Check:
     - fetch signatures via Helius
     - parse new ones
-    - detect big BUYs / SELLs
-    - aktuell: NUR BUY-Whales twittern, Sells nur loggen
+    - detect big buys / sells
+    - tweet if threshold exceeded
     """
     log.info(
         "Helius-check: api_key_set=%s, lenny_ca=%s, min_buy_sol=%.3f",
@@ -2178,44 +2218,59 @@ def check_lenny_whales_once():
     last_processed = None
 
     for sig in new_sigs:
+        # Anti-Spam: Signatur schon mal verarbeitet?
+        if sig in WHALE_SEEN_SIGS:
+            continue
+        _remember_whale_sig(sig)
+
         tx = _helius_get_parsed_tx(sig)
         if not tx:
             continue
 
-        sol_delta = _estimate_sol_in_tx(tx)   # SIGNIERTER Wert
-        amount    = abs(sol_delta)
+        sol_delta = _estimate_sol_in_tx(tx)  # MUSS signed sein (Buy >0, Sell <0)
 
-        # Debug immer loggen
         log.info(
-            "Helius TX: signature=%s ~ %.4f SOL delta (threshold=%.3f)",
+            "Helius TX: signature=%s ~ %.4f SOL delta (buy_thr=%.3f / sell_thr=%.3f)",
             sig,
             sol_delta,
             HELIUS_MIN_BUY_SOL,
+            HELIUS_MIN_SELL_SOL,
         )
 
-        # unterhalb Threshold → egal
-        if amount < HELIUS_MIN_BUY_SOL:
+        kind = None
+
+        # BUY
+        if sol_delta >= HELIUS_MIN_BUY_SOL:
+            kind = "buy"
+
+        # SELL (nur wenn du willst)
+        elif sol_delta <= -HELIUS_MIN_SELL_SOL:
+            kind = "sell"
+
+        if kind is None:
+            # kleiner Move → ignorieren
+            last_processed = sig
             continue
 
-        is_buy = sol_delta > 0       # >0 = SOL raus → Buy
-        side   = "BUY" if is_buy else "SELL"
+        if kind == "buy":
+            log.info("🐳 Whale detected (BUY): signature=%s ~ %.3f SOL", sig, sol_delta)
+            if HELIUS_WHALE_TWEETS_ENABLED:
+                try:
+                    tweet_text = build_whale_tweet(sol_delta, sig, kind="buy")
+                    client.create_tweet(text=tweet_text)
+                    log.info("🐳 Whale BUY Tweet sent: %s", tweet_text)
+                except Exception as e:
+                    log.error("Whale BUY tweet failed: %s", e)
 
-        log.info(
-            "🐳 Whale detected (%s): signature=%s ~ %.3f SOL",
-            side,
-            sig,
-            amount,
-        )
-
-        # aktuell: nur BUY-Whales twittern, SELLs bleiben nur im Log,
-        # damit der Feed nicht bearish wirkt
-        if HELIUS_WHALE_TWEETS_ENABLED and is_buy:
-            try:
-                tweet_text = build_whale_tweet(amount, sig, is_buy=True)
-                client.create_tweet(text=tweet_text)
-                log.info("🐳 Whale Tweet sent: %s", tweet_text)
-            except Exception as e:
-                log.error("Whale tweet failed: %s", e)
+        elif kind == "sell":
+            log.info("🐳 Whale detected (SELL): signature=%s ~ %.3f SOL", sig, sol_delta)
+            if HELIUS_WHALE_SELL_TWEETS_ENABLED:
+                try:
+                    tweet_text = build_whale_tweet(sol_delta, sig, kind="sell")
+                    client.create_tweet(text=tweet_text)
+                    log.info("🐳 Whale SELL Tweet sent: %s", tweet_text)
+                except Exception as e:
+                    log.error("Whale SELL tweet failed: %s", e)
 
         last_processed = sig
 
