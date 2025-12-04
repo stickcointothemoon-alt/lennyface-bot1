@@ -2062,12 +2062,12 @@ def _estimate_sol_in_tx(tx: dict) -> float:
 
 def check_lenny_whales_once():
     """
-    Einmaligen Whale-Check ausführen:
-    - holt letzte Signaturen
-    - stoppt, sobald wir die bekannte last_signature erreicht haben
-    - loggt große Bewegungen (> HELIUS_MIN_BUY_SOL)
-    Für den Anfang NUR Logs, keine Tweets.
+    Einmaligen Whale-Check:
+    - Holt die letzten Signaturen
+    - Stoppt, wenn last_signature erreicht wurde
+    - Loggt große Bewegungen (> HELIUS_MIN_BUY_SOL)
     """
+
     log.info(
         "Helius-check: api_key_set=%s, lenny_ca=%s, min_buy_sol=%.3f",
         bool(HELIUS_API_KEY),
@@ -2084,21 +2084,21 @@ def check_lenny_whales_once():
     if not sigs:
         return
 
-    # Neueste zuerst → wir gehen von hinten nach vorne, damit wir chronologisch loggen
+    # Neueste zuerst → neue Signaturen sammeln
     new_sigs = []
     for row in sigs:
-        sig = row.get("signature") or row.get("signature", None)
+        sig = row.get("signature")
         if not sig:
             continue
         if last_known_sig and sig == last_known_sig:
-            # ab hier alles schon bekannt
+            # Stop, hier beginnt bereits bearbeitet
             break
         new_sigs.append(sig)
 
     if not new_sigs:
         return
 
-    # Reihenfolge drehen: älteste zuerst verarbeiten
+    # Älteste zuerst verarbeiten
     new_sigs = list(reversed(new_sigs))
 
     log.info("Helius: checking %d new signatures for whales", len(new_sigs))
@@ -2112,7 +2112,7 @@ def check_lenny_whales_once():
 
         sol_moved = _estimate_sol_in_tx(tx)
 
-        # Debug: immer loggen, auch wenn es kein Whale ist
+        # Debug Log – immer anzeigen
         log.info(
             "Helius TX: signature=%s ~ %.4f SOL moved (threshold=%.3f)",
             sig,
@@ -2120,27 +2120,22 @@ def check_lenny_whales_once():
             HELIUS_MIN_BUY_SOL,
         )
 
-         if sol_moved >= HELIUS_MIN_BUY_SOL:
-             log.info(
+        # Whale erkannt
+        if sol_moved >= HELIUS_MIN_BUY_SOL:
+            log.info(
                 "🐳 Possible whale TX: signature=%s ~ %.3f SOL moved (threshold=%.3f)",
                 sig,
                 sol_moved,
                 HELIUS_MIN_BUY_SOL,
             )
-
-            if HELIUS_WHALE_TWEETS_ENABLED:
-                try:
-                    tweet_text = build_whale_tweet(sol_moved, sig)
-                    client.create_tweet(text=tweet_text)
-                    log.info("Helius: whale tweet sent for %s", sig)
-                except Exception as e:
-                    log.warning("Helius: whale tweet failed for %s: %s", sig, e)
+            # später Tweet-Build hier hin
 
         last_processed = sig
 
-
+    # Speichere neue letzte bearbeitete Signatur
     if last_processed:
         _save_last_helius_sig(last_processed)
+
 
 def build_whale_tweet(sol_moved: float, signature: str) -> str:
     """
