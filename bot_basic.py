@@ -1947,17 +1947,24 @@ def _load_last_helius_sig() -> str | None:
     return os.environ.get(HELIUS_LAST_SIG_ENV, "").strip() or None
 
 
+def _load_last_helius_sig() -> str | None:
+    """
+    Letzte verarbeitete Signature aus der lokalen Prozess-Env lesen (nur für aktuellen Dyno-Lauf).
+    Kein Heroku-Config-Write, damit keine Restarts ausgelöst werden.
+    """
+    return os.environ.get(HELIUS_LAST_SIG_ENV, "").strip() or None
+
+
 def _save_last_helius_sig(sig: str):
     """
-    Letzte Signature in Heroku Config Vars speichern, damit sie beim nächsten Dyno-Start nicht verloren geht.
+    Letzte Signature nur im laufenden Prozess merken.
+    KEIN Aufruf von _set_config_vars → keine neuen Releases, keine Restarts.
     """
     if not sig:
         return
-    try:
-        _set_config_vars({HELIUS_LAST_SIG_ENV: sig})
-        log.info("Helius: last signature updated → %s", sig)
-    except Exception as e:
-        log.warning("Helius: could not save last signature: %s", e)
+    os.environ[HELIUS_LAST_SIG_ENV] = sig
+    log.info("Helius: last signature updated (local only) → %s", sig)
+
 
 
 def _helius_fetch_recent_txs(limit: int = 50) -> list[dict]:
