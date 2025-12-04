@@ -2059,15 +2059,40 @@ def _estimate_sol_in_tx(tx: dict) -> float:
     except Exception:
         return 0.0
 
+import random
+
+WHALE_TWEET_TEMPLATES = [
+    # A
+    "🐳 **WHALE BUY DETECTED!**\nA degen just splashed **~{sol:.2f} SOL** into $LENNY!\nChads stack, jeets panic. ( ͡° ͜ʖ ͡°)🚀",
+    
+    # B
+    "🚨🐳 **BIG LENNY BUY ALERT!**\nSomeone aped in with **~{sol:.2f} SOL**.\nWhales joining the party — moon incoming! ( ͡° ͜ʖ ͡°)✨",
+    
+    # C (Bonus)
+    "🐳💦 A whale just dropped **{sol:.2f} SOL** into $LENNY!\nBrace yourselves, pump season may begin. ( ͡° ͜ʖ ͡°)🎄"
+]
+
+def build_whale_tweet(sol_amount: float) -> str:
+    template = random.choice(WHALE_TWEET_TEMPLATES)
+    msg = template.format(sol=sol_amount)
+
+    # Season-Dekoration
+    msg = decorate_with_lenny_face(msg, cmd_used="whale")
+
+    # Safety-Hinweise für X (positiv, Neutral)
+    msg += "\n#LENNY #Solana #CryptoAlerts"
+    return msg
+
+
 
 def check_lenny_whales_once():
     """
-    Einmaligen Whale-Check:
-    - Holt die letzten Signaturen
-    - Stoppt, wenn last_signature erreicht wurde
-    - Loggt große Bewegungen (> HELIUS_MIN_BUY_SOL)
+    Whale-Check:
+    - fetch signatures via Helius
+    - parse new ones
+    - detect big buys
+    - tweet if threshold exceeded
     """
-
     log.info(
         "Helius-check: api_key_set=%s, lenny_ca=%s, min_buy_sol=%.3f",
         bool(HELIUS_API_KEY),
@@ -2084,23 +2109,21 @@ def check_lenny_whales_once():
     if not sigs:
         return
 
-    # Neueste zuerst → neue Signaturen sammeln
+    # neue Signaturen filtern
     new_sigs = []
     for row in sigs:
         sig = row.get("signature")
         if not sig:
             continue
         if last_known_sig and sig == last_known_sig:
-            # Stop, hier beginnt bereits bearbeitet
             break
         new_sigs.append(sig)
 
     if not new_sigs:
         return
 
-    # Älteste zuerst verarbeiten
+    # ältere zuerst prüfen
     new_sigs = list(reversed(new_sigs))
-
     log.info("Helius: checking %d new signatures for whales", len(new_sigs))
 
     last_processed = None
@@ -2112,7 +2135,7 @@ def check_lenny_whales_once():
 
         sol_moved = _estimate_sol_in_tx(tx)
 
-        # Debug Log – immer anzeigen
+        # Debug immer loggen
         log.info(
             "Helius TX: signature=%s ~ %.4f SOL moved (threshold=%.3f)",
             sig,
@@ -2120,21 +2143,27 @@ def check_lenny_whales_once():
             HELIUS_MIN_BUY_SOL,
         )
 
-        # Whale erkannt
+        # Whale erkannt → jetzt Tweet erzeugen ❤️
         if sol_moved >= HELIUS_MIN_BUY_SOL:
             log.info(
-                "🐳 Possible whale TX: signature=%s ~ %.3f SOL moved (threshold=%.3f)",
+                "🐳 Whale detected: signature=%s ~ %.3f SOL moved",
                 sig,
                 sol_moved,
-                HELIUS_MIN_BUY_SOL,
             )
-            # später Tweet-Build hier hin
+
+            try:
+                tweet_text = build_whale_tweet(sol_moved)
+                create_tweet(tweet_text)
+                log.info("🐳 Whale Tweet sent: %s", tweet_text)
+            except Exception as e:
+                log.error("Whale tweet failed: %s", e)
 
         last_processed = sig
 
-    # Speichere neue letzte bearbeitete Signatur
     if last_processed:
         _save_last_helius_sig(last_processed)
+        log.info("Helius: last signature updated → %s", last_processed)
+
 
 
 def build_whale_tweet(sol_moved: float, signature: str) -> str:
