@@ -1921,33 +1921,24 @@ def build_roast_reply(context_snippet: str = "") -> str:
 # Helius – Whale Watcher
 # =========================
 
-HELIUS_API_KEY      = os.environ.get("HELIUS_API_KEY", "").strip()
-HELIUS_POLL_SECONDS = int(os.environ.get("HELIUS_POLL_SECONDS", "60"))
+HELIUS_API_KEY       = os.environ.get("HELIUS_API_KEY", "").strip()
+HELIUS_POLL_SECONDS  = int(os.environ.get("HELIUS_POLL_SECONDS", "60"))
 
-# Basis-Buy-Schwelle (allgemein)
-HELIUS_MIN_BUY_SOL = float(os.environ.get("HELIUS_MIN_BUY_SOL", "2"))
+# Schwellen (alle in SOL)
+HELIUS_MIN_BUY_SOL        = float(os.environ.get("HELIUS_MIN_BUY_SOL", "2"))   # normaler Buy
+HELIUS_MIN_NORMAL_BUY_SOL = float(os.environ.get("HELIUS_MIN_NORMAL_BUY_SOL", str(HELIUS_MIN_BUY_SOL)))
+HELIUS_MIN_WHALE_SOL      = float(os.environ.get("HELIUS_MIN_WHALE_SOL", "8"))  # Whale-Buy
+HELIUS_MIN_WHALE_BUY_SOL  = HELIUS_MIN_WHALE_SOL                               # Alias
+HELIUS_MIN_SELL_SOL       = float(os.environ.get("HELIUS_MIN_SELL_SOL", "5"))  # großer Sell
+HELIUS_LAST_SIG_ENV       = "HELIUS_LAST_SIGNATURE"
 
-# Normal-Buy-Schwelle (kann separat im Heroku-Config überschrieben werden)
-HELIUS_MIN_NORMAL_BUY_SOL = float(
-    os.environ.get("HELIUS_MIN_NORMAL_BUY_SOL", str(HELIUS_MIN_BUY_SOL))
-)
+# Feature-Schalter (Tweets/Stats)
+HELIUS_BUY_TWEETS_ENABLED        = os.environ.get("HELIUS_BUY_TWEETS_ENABLED", "1") == "1"
+HELIUS_NORMAL_BUY_TWEETS_ENABLED = HELIUS_BUY_TWEETS_ENABLED   # Alias, wird im Code benutzt
+HELIUS_WHALE_TWEETS_ENABLED      = os.environ.get("HELIUS_WHALE_TWEETS_ENABLED", "1") == "1"
+HELIUS_SELL_STATS_ENABLED        = os.environ.get("HELIUS_SELL_STATS_ENABLED", "1") == "1"
 
-# Whale-Buy-Schwelle
-HELIUS_MIN_WHALE_SOL = float(os.environ.get("HELIUS_MIN_WHALE_SOL", "8"))
-# Alias, damit der Rest vom Code funktioniert
-HELIUS_MIN_WHALE_BUY_SOL = HELIUS_MIN_WHALE_SOL
-
-# Großer Sell (nur für Stats)
-HELIUS_MIN_SELL_SOL = float(os.environ.get("HELIUS_MIN_SELL_SOL", "5"))
-
-HELIUS_LAST_SIG_ENV = "HELIUS_LAST_SIGNATURE"
-
-# Feature-Switches
-HELIUS_BUY_TWEETS_ENABLED   = os.environ.get("HELIUS_BUY_TWEETS_ENABLED", "1") == "1"
-HELIUS_WHALE_TWEETS_ENABLED = os.environ.get("HELIUS_WHALE_TWEETS_ENABLED", "1") == "1"
-HELIUS_SELL_STATS_ENABLED   = os.environ.get("HELIUS_SELL_STATS_ENABLED", "1") == "1"
-
-# In-Memory Anti-Spam für Signaturen
+# In-Memory Anti-Spam für TXs (damit wir dieselbe Signatur nicht dauernd verarbeiten)
 WHALE_SEEN_SIGS: set[str] = set()
 MAX_WHALE_SEEN = 500
 
