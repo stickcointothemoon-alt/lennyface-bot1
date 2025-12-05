@@ -1921,43 +1921,36 @@ def build_roast_reply(context_snippet: str = "") -> str:
 # Helius – Whale Watcher
 # =========================
 
-HELIUS_API_KEY       = os.environ.get("HELIUS_API_KEY", "").strip()
-HELIUS_POLL_SECONDS  = int(os.environ.get("HELIUS_POLL_SECONDS", "45"))
-HELIUS_MIN_BUY_SOL   = float(os.environ.get("HELIUS_MIN_BUY_SOL", "5"))  # ab wie viel SOL = Whale
-HELIUS_LAST_SIG_ENV  = "HELIUS_LAST_SIGNATURE"
+HELIUS_API_KEY      = os.environ.get("HELIUS_API_KEY", "").strip()
+HELIUS_POLL_SECONDS = int(os.environ.get("HELIUS_POLL_SECONDS", "60"))
 
-# Normal-Buy-Schwelle = das gleiche wie HELIUS_MIN_BUY_SOL
-HELIUS_MIN_NORMAL_BUY_SOL = HELIUS_MIN_BUY_SOL
+# Basis-Buy-Schwelle (allgemein)
+HELIUS_MIN_BUY_SOL = float(os.environ.get("HELIUS_MIN_BUY_SOL", "2"))
 
-# Aliases, damit die Namen im Whale-Code garantiert existieren
-HELIUS_MIN_WHALE_BUY_SOL = HELIUS_MIN_WHALE_SOL        
-# <– WICHTIG
+# Normal-Buy-Schwelle (kann separat im Heroku-Config überschrieben werden)
+HELIUS_MIN_NORMAL_BUY_SOL = float(
+    os.environ.get("HELIUS_MIN_NORMAL_BUY_SOL", str(HELIUS_MIN_BUY_SOL))
+)
 
+# Whale-Buy-Schwelle
+HELIUS_MIN_WHALE_SOL = float(os.environ.get("HELIUS_MIN_WHALE_SOL", "8"))
+# Alias, damit der Rest vom Code funktioniert
+HELIUS_MIN_WHALE_BUY_SOL = HELIUS_MIN_WHALE_SOL
 
-# optional: für später, wenn wir Tweets schicken wollen
-HELIUS_WHALE_TWEETS_ENABLED = os.environ.get("HELIUS_WHALE_TWEETS_ENABLED", "0") == "1"
+# Großer Sell (nur für Stats)
+HELIUS_MIN_SELL_SOL = float(os.environ.get("HELIUS_MIN_SELL_SOL", "5"))
 
-# Pump/Raydium etc. – wir starten erst mal einfach mit "alle Transfers in den Lenny-Pool"
-# Dafür brauchen wir den Pool-Account, aber fürs MVP zeigen wir nur Logs.
+HELIUS_LAST_SIG_ENV = "HELIUS_LAST_SIGNATURE"
 
-# Helius – Whale Watcher
-HELIUS_API_KEY       = os.environ.get("HELIUS_API_KEY", "").strip()
-HELIUS_POLL_SECONDS  = int(os.environ.get("HELIUS_POLL_SECONDS", "45"))
-
-# MIN-Buy / Sell (delta in SOL)
-HELIUS_MIN_BUY_SOL      = float(os.environ.get("HELIUS_MIN_BUY_SOL", "2"))   # normaler Buy
-HELIUS_MIN_WHALE_SOL    = float(os.environ.get("HELIUS_MIN_WHALE_SOL", "10"))  # Whale-Buy
-HELIUS_MIN_SELL_SOL     = float(os.environ.get("HELIUS_MIN_SELL_SOL", "5"))  # großer Sell für Stats
-HELIUS_LAST_SIG_ENV  = "HELIUS_LAST_SIGNATURE"
-
-# Tweets für Whales
+# Feature-Switches
 HELIUS_BUY_TWEETS_ENABLED   = os.environ.get("HELIUS_BUY_TWEETS_ENABLED", "1") == "1"
 HELIUS_WHALE_TWEETS_ENABLED = os.environ.get("HELIUS_WHALE_TWEETS_ENABLED", "1") == "1"
 HELIUS_SELL_STATS_ENABLED   = os.environ.get("HELIUS_SELL_STATS_ENABLED", "1") == "1"
 
-# In-Memory Anti-Spam für TXs (damit wir dieselbe Signatur nicht dauernd verarbeiten)
+# In-Memory Anti-Spam für Signaturen
 WHALE_SEEN_SIGS: set[str] = set()
 MAX_WHALE_SEEN = 500
+
 
 
 def _get_helius_base_url() -> str:
