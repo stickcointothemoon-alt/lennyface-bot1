@@ -1926,6 +1926,10 @@ HELIUS_POLL_SECONDS  = int(os.environ.get("HELIUS_POLL_SECONDS", "45"))
 HELIUS_MIN_BUY_SOL   = float(os.environ.get("HELIUS_MIN_BUY_SOL", "5"))  # ab wie viel SOL = Whale
 HELIUS_LAST_SIG_ENV  = "HELIUS_LAST_SIGNATURE"
 
+# Normal-Buy-Schwelle = das gleiche wie HELIUS_MIN_BUY_SOL
+HELIUS_MIN_NORMAL_BUY_SOL = HELIUS_MIN_BUY_SOL
+
+
 # optional: für später, wenn wir Tweets schicken wollen
 HELIUS_WHALE_TWEETS_ENABLED = os.environ.get("HELIUS_WHALE_TWEETS_ENABLED", "0") == "1"
 
