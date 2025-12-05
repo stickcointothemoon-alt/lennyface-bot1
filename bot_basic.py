@@ -1930,7 +1930,8 @@ HELIUS_LAST_SIG_ENV  = "HELIUS_LAST_SIGNATURE"
 HELIUS_MIN_NORMAL_BUY_SOL = HELIUS_MIN_BUY_SOL
 
 # Aliases, damit die Namen im Whale-Code garantiert existieren
-HELIUS_MIN_WHALE_BUY_SOL = HELIUS_MIN_WHALE_SOL        # <– WICHTIG
+HELIUS_MIN_WHALE_BUY_SOL = HELIUS_MIN_WHALE_SOL        
+# <– WICHTIG
 
 
 # optional: für später, wenn wir Tweets schicken wollen
