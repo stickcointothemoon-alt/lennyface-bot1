@@ -2087,7 +2087,7 @@ def _estimate_sol_in_tx(tx: dict) -> float:
 import random
 
 # ⚙️ Erwartete ENV-Variablen (oben im File definiert sein):
-# HELIUS_MIN_NORMAL_BUY_SOL  -> ab hier normaler Buy-Tweet, z.B. 0.3
+# HELIUS_MIN_BUY_SOL         -> ab hier normaler Buy-Tweet, z.B. 0.3
 # HELIUS_MIN_BUY_SOL         -> ab hier Whale-Buy, z.B. 2.0
 # HELIUS_MIN_SELL_SOL        -> ab hier "großer Sell", z.B. 5.0
 # HELIUS_WHALE_TWEETS_ENABLED      -> "true"/"false"
@@ -2278,7 +2278,7 @@ def check_lenny_whales_once():
             "Helius TX: signature=%s ~ %.4f SOL delta (normal_buy_thr=%.3f / whale_buy_thr=%.3f / sell_thr=%.3f)",
             sig,
             sol_delta,
-            HELIUS_MIN_NORMAL_BUY_SOL,
+            HELIUS_MIN_BUY_SOL,
             HELIUS_MIN_BUY_SOL,
             HELIUS_MIN_SELL_SOL,
         )
@@ -2289,7 +2289,7 @@ def check_lenny_whales_once():
         if sol_delta >= HELIUS_MIN_BUY_SOL:
             kind = "whale_buy"
         # normaler Buy
-        elif sol_delta >= HELIUS_MIN_NORMAL_BUY_SOL:
+        elif sol_delta >= HELIUS_MIN_BUY_SOL:
             kind = "normal_buy"
         # Sell (nur für Stats, kein Tweet)
         elif sol_delta <= -HELIUS_MIN_SELL_SOL:
