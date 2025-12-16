@@ -2051,25 +2051,107 @@ def _helius_get_parsed_tx(signature: str) -> dict | None:
 
 def _estimate_sol_in_tx(tx: dict) -> float:
     """
-    Gibt eine *signierte* SOL-Änderung für den Fee-Payer zurück.
-
-    > 0  → Fee-Payer hat SOL ausgegeben  (typisch BUY in den Pool)
-    < 0  → Fee-Payer hat SOL bekommen   (typisch SELL / Exit aus dem Pool)
+    Bessere SOL-Delta Schätzung:
+    1) Finde den Owner, der $LENNY Tokens NETTO dazu bekommen hat (Buyer).
+    2) Berechne SOL-Delta genau für diesen Owner (nicht Fee-Payer).
+    Fallback: Fee-Payer (Index 0).
+    
+    Return:
+      >0 = SOL ging raus (BUY)
+      <0 = SOL kam rein (SELL)
     """
     try:
         meta = tx.get("meta") or {}
-        pre = meta.get("preBalances") or []
-        post = meta.get("postBalances") or []
-        if not pre or not post:
+        msg  = (tx.get("transaction") or {}).get("message") or {}
+
+        pre_bal = meta.get("preBalances") or []
+        post_bal = meta.get("postBalances") or []
+        if not pre_bal or not post_bal:
             return 0.0
 
-        # nur Index 0 (Fee-Payer)
-        sol_before = pre[0] / 1e9
-        sol_after  = post[0] / 1e9
+        # accountKeys kann bei jsonParsed verschieden strukturiert sein
+        keys = msg.get("accountKeys") or []
+        account_keys = []
+        for k in keys:
+            if isinstance(k, str):
+                account_keys.append(k)
+            elif isinstance(k, dict):
+                # jsonParsed liefert manchmal {"pubkey": "...", ...}
+                pk = k.get("pubkey")
+                if pk:
+                    account_keys.append(pk)
 
-        # POSITIV = SOL ging raus (er hat bezahlt → eher BUY)
-        # NEGATIV = SOL kam rein (er hat bekommen → eher SELL)
+        # --- 1) Buyer/Seller über Token-Balances finden (LENNY Mint) ---
+        mint = (LENNY_TOKEN_CA or "").strip()
+        pre_tb = meta.get("preTokenBalances") or []
+        post_tb = meta.get("postTokenBalances") or []
+
+        def _ui_amount(tb: dict) -> float:
+            ui = (tb.get("uiTokenAmount") or {})
+            # uiAmount ist float oder None, uiAmountString ist string
+            if ui.get("uiAmount") is not None:
+                return float(ui["uiAmount"])
+            s = ui.get("uiAmountString")
+            if s is not None:
+                try:
+                    return float(s)
+                except Exception:
+                    return 0.0
+            # fallback raw
+            amt = ui.get("amount")
+            dec = ui.get("decimals") or 0
+            if amt is not None:
+                try:
+                    return float(amt) / (10 ** int(dec))
+                except Exception:
+                    return 0.0
+            return 0.0
+
+        # map: owner -> token_amount
+        pre_map = {}
+        post_map = {}
+
+        for tb in pre_tb:
+            if mint and tb.get("mint") != mint:
+                continue
+            owner = tb.get("owner")  # super wichtig: das ist der Wallet-Owner
+            if owner:
+                pre_map[owner] = pre_map.get(owner, 0.0) + _ui_amount(tb)
+
+        for tb in post_tb:
+            if mint and tb.get("mint") != mint:
+                continue
+            owner = tb.get("owner")
+            if owner:
+                post_map[owner] = post_map.get(owner, 0.0) + _ui_amount(tb)
+
+        # delta per owner
+        deltas = []
+        for owner in set(pre_map.keys()) | set(post_map.keys()):
+            d = post_map.get(owner, 0.0) - pre_map.get(owner, 0.0)
+            if abs(d) > 0:
+                deltas.append((owner, d))
+
+        buyer_owner = None
+        if deltas:
+            # Buyer = größter positiver Token-Zuwachs
+            deltas.sort(key=lambda x: x[1], reverse=True)
+            if deltas[0][1] > 0:
+                buyer_owner = deltas[0][0]
+            # optional: Seller wäre größter negativer, falls du später brauchst
+
+        # --- 2) SOL delta genau für Buyer-Owner berechnen ---
+        if buyer_owner and buyer_owner in account_keys:
+            idx = account_keys.index(buyer_owner)
+            sol_before = pre_bal[idx] / 1e9
+            sol_after  = post_bal[idx] / 1e9
+            return sol_before - sol_after  # >0 BUY, <0 SELL
+
+        # --- Fallback: Fee-Payer (Index 0) ---
+        sol_before = pre_bal[0] / 1e9
+        sol_after  = post_bal[0] / 1e9
         return sol_before - sol_after
+
     except Exception:
         return 0.0
 
