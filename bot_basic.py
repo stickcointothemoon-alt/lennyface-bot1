@@ -1934,49 +1934,30 @@ HELIUS_LAST_SIG_ENV       = "HELIUS_LAST_SIGNATURE"
 
 # Feature-Schalter (Tweets/Stats)
 HELIUS_BUY_TWEETS_ENABLED        = os.environ.get("HELIUS_BUY_TWEETS_ENABLED", "1") == "1"
-HELIUS_NORMAL_BUY_TWEETS_ENABLED = HELIUS_BUY_TWEETS_ENABLED   # Alias, wird im Code benutzt
+HELIUS_NORMAL_BUY_TWEETS_ENABLED = os.environ.get("HELIUS_NORMAL_BUY_TWEETS_ENABLED", "1") == "1"
 HELIUS_WHALE_TWEETS_ENABLED      = os.environ.get("HELIUS_WHALE_TWEETS_ENABLED", "1") == "1"
 HELIUS_SELL_STATS_ENABLED        = os.environ.get("HELIUS_SELL_STATS_ENABLED", "1") == "1"
 
-# In-Memory Anti-Spam für TXs (damit wir dieselbe Signatur nicht dauernd verarbeiten)
+# In-Memory Anti-Spam für TXs
 WHALE_SEEN_SIGS: set[str] = set()
 MAX_WHALE_SEEN = 500
 
-
-
 def _get_helius_base_url() -> str:
-    """
-    Standard-RPC Endpoint von Helius für parsed transactions.
-    """
     if not HELIUS_API_KEY:
         return ""
     return f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 
-
 def _load_last_helius_sig() -> str | None:
-    """
-    Letzte verarbeitete Signature aus ENV lesen (wenn vorhanden).
-    """
+    # nur lokal im Dyno lesen
     return os.environ.get(HELIUS_LAST_SIG_ENV, "").strip() or None
-
-
-def _load_last_helius_sig() -> str | None:
-    """
-    Letzte verarbeitete Signature aus der lokalen Prozess-Env lesen (nur für aktuellen Dyno-Lauf).
-    Kein Heroku-Config-Write, damit keine Restarts ausgelöst werden.
-    """
-    return os.environ.get(HELIUS_LAST_SIG_ENV, "").strip() or None
-
 
 def _save_last_helius_sig(sig: str):
-    """
-    Letzte Signature nur im laufenden Prozess merken.
-    KEIN Aufruf von _set_config_vars → keine neuen Releases, keine Restarts.
-    """
+    # nur lokal im Dyno speichern (kein Heroku Config write)
     if not sig:
         return
     os.environ[HELIUS_LAST_SIG_ENV] = sig
     log.info("Helius: last signature updated (local only) → %s", sig)
+
 
 
 
@@ -2048,117 +2029,95 @@ def _helius_get_parsed_tx(signature: str) -> dict | None:
         log.warning("Helius getTransaction failed for %s: %s", signature, e)
         return None
 
-
-def _estimate_sol_in_tx(tx: dict) -> float:
+def _helius_get_enhanced_tx(signature: str) -> dict | None:
     """
-    Bessere SOL-Delta Schätzung:
-    1) Finde den Owner, der $LENNY Tokens NETTO dazu bekommen hat (Buyer).
-    2) Berechne SOL-Delta genau für diesen Owner (nicht Fee-Payer).
-    Fallback: Fee-Payer (Index 0).
-    
+    Helius Enhanced TX (liefert swap/nativeTransfers/tokenTransfers sauber)
+    Docs: /v0/transactions
+    """
+    if not HELIUS_API_KEY:
+        return None
+
+    url = f"https://api.helius.xyz/v0/transactions/?api-key={HELIUS_API_KEY}"
+    payload = {"transactions": [signature]}
+
+    try:
+        r = requests.post(url, json=payload, timeout=20)
+        r.raise_for_status()
+        data = r.json() or []
+        if isinstance(data, list) and data:
+            return data[0]
+        return None
+    except Exception as e:
+        log.warning("Helius enhanced failed for %s: %s", signature, e)
+        return None
+
+
+
+def _estimate_sol_in_tx(parsed_tx: dict, enhanced_tx: dict | None = None) -> float:
+    """
+    BEST PRACTICE:
+    1) Wenn Helius Enhanced TX Swap-Events liefert → benutze die (am genauesten).
+    2) Sonst Fallback auf parsed balances (Fee-Payer), wie vorher.
+
     Return:
       >0 = SOL ging raus (BUY)
       <0 = SOL kam rein (SELL)
     """
     try:
-        meta = tx.get("meta") or {}
-        msg  = (tx.get("transaction") or {}).get("message") or {}
-
-        pre_bal = meta.get("preBalances") or []
-        post_bal = meta.get("postBalances") or []
-        if not pre_bal or not post_bal:
-            return 0.0
-
-        # accountKeys kann bei jsonParsed verschieden strukturiert sein
-        keys = msg.get("accountKeys") or []
-        account_keys = []
-        for k in keys:
-            if isinstance(k, str):
-                account_keys.append(k)
-            elif isinstance(k, dict):
-                # jsonParsed liefert manchmal {"pubkey": "...", ...}
-                pk = k.get("pubkey")
-                if pk:
-                    account_keys.append(pk)
-
-        # --- 1) Buyer/Seller über Token-Balances finden (LENNY Mint) ---
         mint = (LENNY_TOKEN_CA or "").strip()
-        pre_tb = meta.get("preTokenBalances") or []
-        post_tb = meta.get("postTokenBalances") or []
 
-        def _ui_amount(tb: dict) -> float:
-            ui = (tb.get("uiTokenAmount") or {})
-            # uiAmount ist float oder None, uiAmountString ist string
-            if ui.get("uiAmount") is not None:
-                return float(ui["uiAmount"])
-            s = ui.get("uiAmountString")
-            if s is not None:
-                try:
-                    return float(s)
-                except Exception:
-                    return 0.0
-            # fallback raw
-            amt = ui.get("amount")
-            dec = ui.get("decimals") or 0
-            if amt is not None:
-                try:
-                    return float(amt) / (10 ** int(dec))
-                except Exception:
-                    return 0.0
+        # -----------------------------
+        # 1) ENHANCED SWAP-LOGIK (best)
+        # -----------------------------
+        if enhanced_tx:
+            events = enhanced_tx.get("events") or {}
+            swap = events.get("swap")
+
+            if swap and mint:
+                native_in = swap.get("nativeInput")   # z.B. SOL rein
+                native_out = swap.get("nativeOutput") # z.B. SOL raus
+                token_in = swap.get("tokenInputs") or []
+                token_out = swap.get("tokenOutputs") or []
+
+                def _has_mint(arr):
+                    for t in arr:
+                        if (t.get("mint") or "").strip() == mint:
+                            return True
+                    return False
+
+                # BUY: SOL rein + LENNY raus
+                if native_in and _has_mint(token_out):
+                    lamports = float(native_in.get("amount") or 0)
+                    return lamports / 1e9  # positiv = BUY
+
+                # SELL: LENNY rein + SOL raus
+                if native_out and _has_mint(token_in):
+                    lamports = float(native_out.get("amount") or 0)
+                    return -(lamports / 1e9)  # negativ = SELL
+
+            # Falls Enhanced existiert, aber kein Swap-Event: weiter zum Fallback
+
+        # -----------------------------
+        # 2) FALLBACK: parsed balances
+        # -----------------------------
+        meta = parsed_tx.get("meta") or {}
+        pre = meta.get("preBalances") or []
+        post = meta.get("postBalances") or []
+        if not pre or not post:
             return 0.0
 
-        # map: owner -> token_amount
-        pre_map = {}
-        post_map = {}
-
-        for tb in pre_tb:
-            if mint and tb.get("mint") != mint:
-                continue
-            owner = tb.get("owner")  # super wichtig: das ist der Wallet-Owner
-            if owner:
-                pre_map[owner] = pre_map.get(owner, 0.0) + _ui_amount(tb)
-
-        for tb in post_tb:
-            if mint and tb.get("mint") != mint:
-                continue
-            owner = tb.get("owner")
-            if owner:
-                post_map[owner] = post_map.get(owner, 0.0) + _ui_amount(tb)
-
-        # delta per owner
-        deltas = []
-        for owner in set(pre_map.keys()) | set(post_map.keys()):
-            d = post_map.get(owner, 0.0) - pre_map.get(owner, 0.0)
-            if abs(d) > 0:
-                deltas.append((owner, d))
-
-        buyer_owner = None
-        if deltas:
-            # Buyer = größter positiver Token-Zuwachs
-            deltas.sort(key=lambda x: x[1], reverse=True)
-            if deltas[0][1] > 0:
-                buyer_owner = deltas[0][0]
-            # optional: Seller wäre größter negativer, falls du später brauchst
-
-        # --- 2) SOL delta genau für Buyer-Owner berechnen ---
-        if buyer_owner and buyer_owner in account_keys:
-            idx = account_keys.index(buyer_owner)
-            sol_before = pre_bal[idx] / 1e9
-            sol_after  = post_bal[idx] / 1e9
-            return sol_before - sol_after  # >0 BUY, <0 SELL
-
-        # --- Fallback: Fee-Payer (Index 0) ---
-        sol_before = pre_bal[0] / 1e9
-        sol_after  = post_bal[0] / 1e9
+        sol_before = pre[0] / 1e9
+        sol_after  = post[0] / 1e9
         return sol_before - sol_after
 
     except Exception:
         return 0.0
 
+
 # =========================
 # Lenny Helius Trade Tweets (Buys + Whales)
 # =========================
-import random
+
 
 # Fallback-Templates, falls Grok nichts liefert
 NORMAL_BUY_TEMPLATES = [
@@ -2222,7 +2181,8 @@ def build_lenny_trade_tweet(sol_delta: float, signature: str, kind: str) -> str:
         base = template.format(sol=amount)
 
     # 3) Lennyface + Season-Deko
-    base = decorate_with_lenny_face(base, cmd_used="whale")
+    base = decorate_with_lenny_face(base, cmd_used=kind)
+
 
     # 4) Standard-Hashtags absichern (falls Grok keine gesetzt hat)
     up = base.upper()
@@ -2306,11 +2266,13 @@ def check_lenny_whales_once():
         _remember_whale_sig(sig)
 
         tx = _helius_get_parsed_tx(sig)
-        if not tx:
-            continue
+             if not tx:
+             continue
 
-        sol_delta = _estimate_sol_in_tx(tx)  # Buy > 0, Sell < 0
-        log.info(
+            enh = _helius_get_enhanced_tx(sig)  # kann None sein, ist okay
+            sol_delta = _estimate_sol_in_tx(tx, enhanced_tx=enh)
+            # Buy > 0, Sell < 0
+            log.info(
             "Helius TX: signature=%s ~ %.4f SOL delta (normal_buy_thr=%.3f / whale_buy_thr=%.3f / sell_thr=%.3f)",
             sig,
             sol_delta,
