@@ -413,6 +413,20 @@ SAFE_LINK_DOMAINS = os.environ.get(
 
 SAFE_LINK_DOMAINS = [d.strip().lower() for d in SAFE_LINK_DOMAINS if d.strip()]
 
+# =========================
+# SOCIAL LINKS
+# =========================
+SOCIAL_LINKTREE_URL = os.environ.get(
+    "SOCIAL_LINKTREE_URL",
+    "https://linktr.ee/YOUR_LINKTREE"
+)
+
+# =========================
+# SCAM / WALLET DETECTION
+# =========================
+SOL_WALLET_REGEX = re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{32,44}\b")
+
+
 
 # =====================================
 # MC_COMPARE – weitere Tokens aus ENV
@@ -787,30 +801,35 @@ def save_seen_now():
     log.info("State backup (manual): %d IDs gespeichert.", len(SEEN))
 
 # ==========================
-#  Link- / Scam-Detection
+# Link / Scam / Social / Wallet Detection (SINGLE SOURCE OF TRUTH)
 # ==========================
-import re
 from urllib.parse import urlparse
 
 URL_REGEX = re.compile(r"https?://\S+", re.IGNORECASE)
 
-# Default-Whitelist:
-# - dexscreener.com  → dein Chart-Link
-# - linktr.ee        → Linktree
-# - x.com/twitter.com→ normale X-Posts + Medien
-# - lennyface-bot-736b44838bb5.herokuapp.com → dein eigener Bot-Link
+# Whitelist Domains (Subdomains erlaubt)
 SAFE_LINK_DOMAINS = os.environ.get(
     "SAFE_LINK_DOMAINS",
-    "dexscreener.com,linktr.ee,x.com,twitter.com,lennyface-bot-736b44838bb5.herokuapp.com"
+    "dexscreener.com,linktr.ee,x.com,twitter.com,lennyface-bot-736b44838bb5.herokuapp.com,solscan.io"
 ).split(",")
 SAFE_LINK_DOMAINS = [d.strip().lower() for d in SAFE_LINK_DOMAINS if d.strip()]
 
+# Social Link (Linktree)
+LINKTREE_URL = os.environ.get("LINKTREE_URL", "https://linktr.ee/DEIN_LINKTREE").strip()
+
+# Wallet Regex
+SOL_WALLET_REGEX = re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{32,44}\b")
+ETH_WALLET_REGEX = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
+
+SOCIAL_KEYWORDS = [
+    "website", "site", "social", "socials", "links", "linktree",
+    "telegram", "tg", "discord",
+    "twitter", "x", "instagram", "insta",
+    "tiktok",
+]
 
 def _resolve_final_host(url: str) -> str | None:
-    """
-    Versucht bei Kurzlinks (z.B. t.co) die finale Ziel-Domain zu ermitteln.
-    Gibt z.B. 'x.com' oder 'dexscreener.com' zurück.
-    """
+    """Bei t.co o. Redirects die Ziel-Domain auflösen."""
     try:
         r = requests.head(url, allow_redirects=True, timeout=5)
         final_url = r.url
@@ -820,19 +839,12 @@ def _resolve_final_host(url: str) -> str | None:
     except Exception:
         return None
 
-
 def _get_effective_host(url: str) -> str | None:
-    """
-    Holt die Domain eines Links.
-    Bei t.co wird versucht, auf die echte Ziel-Domain aufzulösen.
-    """
     try:
         parsed = urlparse(url)
         host = (parsed.netloc or "").lower()
         if not host:
             return None
-
-        # t.co → versuch, echte Ziel-Domain zu holen
         if host == "t.co":
             resolved = _resolve_final_host(url)
             if resolved:
@@ -841,51 +853,35 @@ def _get_effective_host(url: str) -> str | None:
     except Exception:
         return None
 
-
 def extract_urls(text: str) -> list[str]:
     if not text:
         return []
     return URL_REGEX.findall(text)
 
-
 def is_safe_url(url: str) -> bool:
-    """
-    True, wenn die Domain (nach evt. Redirect) in SAFE_LINK_DOMAINS whitelisted ist.
-    """
     host = _get_effective_host(url)
     if not host:
         return False
-
     for dom in SAFE_LINK_DOMAINS:
-        dom = dom.strip().lower()
-        if not dom:
-            continue
-        # exakte Domain oder Subdomain
         if host == dom or host.endswith("." + dom):
             return True
     return False
 
-
 def has_suspicious_link(text: str) -> bool:
-    """
-    True, wenn im Text irgendein Link ist,
-    der NICHT in SAFE_LINK_DOMAINS liegt.
-    """
+    """True wenn irgendein Link NICHT whitelisted ist."""
     urls = extract_urls(text)
     if not urls:
         return False
+    return any(not is_safe_url(u) for u in urls)
 
-    for u in urls:
-        if not is_safe_url(u):
-            return True
-    return False
-
+def contains_wallet_address(text: str) -> bool:
+    """True wenn Solana oder ETH Wallet im Text vorkommt."""
+    if not text:
+        return False
+    return bool(SOL_WALLET_REGEX.search(text) or ETH_WALLET_REGEX.search(text))
 
 def sanitize_reply_links(text: str) -> str:
-    """
-    Entfernt ALLE Links aus der Antwort, die nicht whitelisted sind.
-    Dexscreener + Linktree + X bleiben erhalten (über SAFE_LINK_DOMAINS).
-    """
+    """Entfernt alle nicht-whitelisted Links aus der Bot-Antwort."""
     if not text:
         return text
 
@@ -897,28 +893,35 @@ def sanitize_reply_links(text: str) -> str:
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
 
+def is_social_request(text_lower: str) -> bool:
+    if not text_lower:
+        return False
+    return any(k in text_lower for k in SOCIAL_KEYWORDS)
 
-def build_scam_warning_reply(src: str) -> str:
-    """
-    Standard-Reply bei verdächtigen Links.
-    Kein Repost des Links, rotierende sichere Antworten.
-    Immer mit $LENNY + Lennyface.
-    """
+def build_social_reply() -> str:
+    """Antwortet mit offizieller Linktree-Seite."""
+    if not LINKTREE_URL or "DEIN_LINKTREE" in LINKTREE_URL:
+        return "Official $LENNY links are only shared via verified sources. Stay safe."
+    return f"All official $LENNY links (Website/TG/X/IG/TikTok) are here: {LINKTREE_URL} — don’t trust random DMs."
 
+def build_wallet_scam_warning() -> str:
+    """Wenn jemand Wallet Addys postet → warnen, nicht amplifizieren."""
     options = [
-        "Easy there, degen. Random links can drain bags real quick. Stick to Dexscreener + official $LENNY links only. ( ͡° ͜ʖ ͡°)",
-        "Careful fren — mystery links are how wallets go *bye bye*. Only trust Dexscreener + official $LENNY sources. ( ͡° ͜ʖ ͡°)",
-        "Unknown links = danger zone. Protect those bags and use only Dexscreener + official $LENNY links. Stay safe, stay smirkin’. ( ͡° ͜ʖ ͡°)",
-        "Random links? Nah fam. That’s a fast-track to getting rugged. Official $LENNY links + Dexscreener only. ( ͡° ͜ʖ ͡°)",
-        "Fren, clicking mystery links is like signing a blank check. Keep it clean: Dexscreener + official $LENNY links only. ( ͡° ͜ʖ ͡°)",
-        "Heads up — shady links love fresh wallets. Trust only Dexscreener + verified $LENNY sources. Smirk responsibly. ( ͡° ͜ʖ ͡°)",
-        "Yo, that link looks spicier than it should. Avoid getting cooked — use Dexscreener + official $LENNY links only. ( ͡° ͜ʖ ͡°)",
-        "Hold up degen — before you click anything, remember mystery links = instant regret. Stick to official $LENNY + Dexscreener. ( ͡° ͜ʖ ͡°)",
+        "Nah. I’m not amplifying random wallet addys. Scammers farm those replies. Use only official $LENNY links + Dexscreener.",
+        "Wallet addy in replies = usually a trap. I’m not helping scammers. Stick to official $LENNY sources.",
+        "Don’t paste wallet addresses in public threads. Scammers love it. Use official $LENNY links only.",
     ]
-
     return random.choice(options)
 
-
+def build_scam_warning_reply(src: str) -> str:
+    """Standard-Reply bei verdächtigen Links (ohne Link zu reposten)."""
+    options = [
+        "Easy there, degen. Random links can drain bags real quick. Stick to Dexscreener + official $LENNY links only.",
+        "Careful fren — mystery links are how wallets go bye bye. Only trust Dexscreener + official $LENNY sources.",
+        "Unknown links = danger zone. Protect those bags and use only Dexscreener + official $LENNY links.",
+        "Random links? Nah fam. That’s a fast-track to getting rugged. Official $LENNY links + Dexscreener only.",
+    ]
+    return random.choice(options)
 
 # =========================
 # Usage Stats (für Dashboard)
@@ -1851,6 +1854,18 @@ def build_help_reply() -> str:
         "roast → light roast, no slurs"
     )
 
+def build_social_reply() -> str:
+    link = os.environ.get("LENNY_LINKTREE", "").strip()
+    if not link:
+        return "All official $LENNY links are shared via our socials. Stay safe. ( ͡° ͜ʖ ͡°)"
+
+    return (
+        "Looking for official $LENNY socials?\n"
+        "Website • TG • X • Insta • TikTok 👇\n"
+        f"{link} ( ͡° ͜ʖ ͡°)"
+    )
+
+
 def build_lore_reply() -> str:
     """
     Lenny Lore in kurz, mit starken Fakten.
@@ -2399,19 +2414,26 @@ def main():
                         remember_and_maybe_backup(tid)
                         continue
 
-                    # --- Command-Erkennung mit Toggles ---
+                                         # --- Command-Erkennung mit Toggles ---
                     src_lower = src.lower()
                     cmd_used = None  # für User-Memory
 
-                    # DEBUG: Command-Detection loggen
                     log.info("Command detection for mention %s: %s", tid, src_lower)
 
-                    # --- NEU: Scam-Link-Check ---
-                    if has_suspicious_link(src):
-                        # Wenn ein verdächtiger Link im User-Tweet ist:
-                        # → KEIN normaler Command, nur Warnung schicken
+                    # PRIO 0: Wallet Addys / Scam-Bait (egal ob Link drin ist)
+                    if contains_wallet_address(src):
+                        text = build_wallet_scam_warning()
+                        cmd_used = "wallet_scam"
+
+                    # PRIO 1: Suspicious Links
+                    elif has_suspicious_link(src):
                         text = build_scam_warning_reply(src)
                         cmd_used = "scam_warn"
+
+                    # PRIO 2: Socials / Website / TG / etc.
+                    elif is_social_request(src_lower):
+                        text = build_social_reply()
+                        cmd_used = "social"
 
                     else:
                         # 1) HELP
@@ -2432,7 +2454,7 @@ def main():
                             text = build_lore_reply()
                             cmd_used = "lore"
 
-                        # 3) MC COMPARE (z.B. "lenny vs troll", "bonk vs lenny", mit oder ohne 'mc')
+                        # 3) MC COMPARE
                         elif "vs" in src_lower and any(tok in src_lower for tok in [
                             "lenny", "lennyface", "$lenny",
                             "troll", "$troll",
@@ -2446,7 +2468,7 @@ def main():
                             text = build_mc_compare_reply(src)
                             cmd_used = "mc_compare"
 
-                        # 4) PRICE / MC / STATS / VOLUME / CHART (Standard)
+                        # 4) PRICE / MC / STATS / VOLUME / CHART
                         elif any(k in src_lower for k in [
                             "price", " mc", "market cap", "marketcap",
                             "volume", "vol ", "stats", "chart"
@@ -2489,6 +2511,8 @@ def main():
                         else:
                             text = build_reply_text(src)
                             cmd_used = "shill"
+
+
 
                     # SAFETY: falls irgendeine Funktion None zurückgibt
                     if not text:
